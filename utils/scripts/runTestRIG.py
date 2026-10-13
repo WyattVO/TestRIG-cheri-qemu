@@ -37,6 +37,7 @@
 #
 
 import argparse
+import json
 import os
 import os.path as op
 import re
@@ -240,6 +241,37 @@ args = parser.parse_args()
 # helpers #
 ###########
 
+def probe_qemu_riscv_cpu(qemu_path, xlen):
+  """Return (property names, CPU model names) supported by a QEMU binary."""
+  props = set()
+  # QEMU 8.x+: ISA extensions are per-instance properties, which only show up
+  # through QMP's CPU model expansion.
+  qmp = '{"execute":"qmp_capabilities"}\n' \
+        '{"execute":"query-cpu-model-expansion","arguments":' \
+        '{"type":"full","model":{"name":"%s"}}}\n{"execute":"quit"}\n' % xlen
+  try:
+    out = sub.run([qemu_path, "-M", "none", "-display", "none", "-qmp", "stdio"],
+                  input=qmp, capture_output=True, text=True, timeout=30).stdout
+    for line in out.splitlines():
+      ret = json.loads(line).get("return") if line.startswith("{") else None
+      if isinstance(ret, dict) and "model" in ret:
+        props.update(ret["model"].get("props", {}))
+  except (OSError, sub.TimeoutExpired, ValueError):
+    pass
+  # QEMU 7.x: extensions are class properties listed by -device help.
+  out = sub.run([qemu_path, "-device", xlen + "-riscv-cpu,help"],
+                capture_output=True, text=True, timeout=30).stdout
+  props.update(re.findall(r"^\s+([A-Za-z0-9_.-]+)=", out, re.M))
+  if not props:
+    sys.exit("FATAL: could not query CPU properties from " + qemu_path)
+  # Single-letter MISA extensions are accepted by every QEMU version but are
+  # not always reported (QEMU 10.x omits them from the model expansion).
+  props.update("iemafdcsuhv" if xlen == "rv64" else "iemafdcsuh")
+  out = sub.run([qemu_path, "-cpu", "help"], capture_output=True, text=True,
+                timeout=30).stdout
+  models = set(out.replace("Available CPUs:", "").split())
+  return props, models
+
 class ISA_Configuration:
   has_xlen_32 = False
   has_xlen_64 = False
@@ -348,40 +380,51 @@ class ISA_Configuration:
       print("Make sure you have build Spike with CHERI with 'make spike-cheri'")
     return result
 
-  def get_qemu_cpu(self):
-    # See cpu.c: static Property riscv_cpu_properties[]
-    # Only e is off by default
-    supported_qemu_exts = list("iegmafdc") + ["Counters", "Zifencei"]
-    # Explicitly disable QEMU extensions that are on by default and selectively enable
-    ext_map = {k: k + "=false" for k in supported_qemu_exts}
-    # TestRIG expects s,u,Zicsr to be on by default:
-    ext_map["s"] = "s=true"
-    ext_map["u"] = "u=true"
+  # TestRIG extension name -> candidate QEMU property spellings, newest first.
+  # Each candidate is a tuple of properties that must all exist; e.g. QEMU 7.x
+  # had a single "Counters" switch, which QEMU 8.x+ split into zicntr/zihpm.
+  qemu_ext_spellings = {
+    "icsr": [("zicsr",), ("Zicsr",)],
+    "ifencei": [("zifencei",), ("Zifencei",)],
+    "ihpm": [("zicntr", "zihpm"), ("Counters",)],
+    "cheri": [("Xcheri",)],
+  }
+
+  def get_qemu_cpu(self, qemu_path):
+    # QEMU renames RISC-V CPU properties between releases, so ask the binary
+    # which properties it has instead of hard-coding one release's names.
+    xlen = "rv32" if self.has_xlen_32 else "rv64"
+    props, models = probe_qemu_riscv_cpu(qemu_path, xlen)
+    # Prefer the bare model (QEMU 9.0+): it enables nothing by default, so
+    # turning off A/F cannot conflict with extensions that depend on them.
+    result = xlen + "i" if xlen + "i" in models else xlen
+    # Explicitly disable QEMU extensions that are on by default and selectively
+    # enable the requested ones. TestRIG expects s, u and Zicsr to be on.
+    wanted = {k: False for k in "iegmafdchv"}
+    wanted.update({"ifencei": False, "ihpm": False, "s": True, "u": True})
     print("WARNING: enabling s and u extensions by default in QEMU.")
     if not self.has_icsr:
-      ext_map["Zicsr"] = "Zicsr=true"
       print("WARNING: enabling Zicsr extension by default in QEMU.")
-    # TODO: mmu/pmp/priv_spec?
-    # DEFINE_PROP_STRING("priv_spec", RISCVCPU, cfg.priv_spec),
-    # DEFINE_PROP_BOOL("mmu", RISCVCPU, cfg.mmu, true),
-    # DEFINE_PROP_BOOL("pmp", RISCVCPU, cfg.pmp, true),
-    result = ""
-    if self.has_xlen_32:
-      result = "rv32"
-    elif self.has_xlen_64:
-      result = "rv64"
-    for ext, value in self.ext_map.items():
-      # Note: QEMU expects ,Xcheri=true to be passed
-      if ext == "cheri":
-        ext = "Xcheri"
-      if ext == "icsr":
-        ext = "Zicsr"
-      if ext == "ihpm":
-        ext = "Counters"
-      if ext == "ifencei":
-        ext = "Zifencei"
-      ext_map[ext] = ext + "=" + str(value).lower()
-    result += "," + ",".join(ext_map.values())
+    wanted["icsr"] = True
+    wanted.update(self.ext_map)
+    settings = []
+    for ext, value in wanted.items():
+      if len(ext) == 1:
+        if ext in props:
+          settings.append((ext, value))
+        elif value:
+          sys.exit("FATAL: {} has no '{}' extension".format(qemu_path, ext))
+        continue
+      for names in self.qemu_ext_spellings[ext]:
+        if all(n in props for n in names):
+          settings += [(n, value) for n in names]
+          break
+      else:
+        if value:
+          sys.exit("FATAL: {} supports none of {} for extension '{}'".format(
+            qemu_path, self.qemu_ext_spellings[ext], ext))
+        print("WARNING: QEMU has no property for '{}'; leaving it at the default.".format(ext))
+    result += "," + ",".join("{}={}".format(n, str(v).lower()) for n, v in settings)
     return result
 
   def get_sail_name(self):
@@ -452,11 +495,11 @@ def spawn_rvfi_dii_server(name, port, log, isa_def):
       args.path_to_qemu = op.join(implementations_path, "qemu/build")
       # TODO: allow testing against non-CHERI versions
       if isa_def.has_xlen_32:
-        args.path_to_qemu += "/riscv32-softmmu/qemu-system-riscv32"
+        args.path_to_qemu += "/qemu-system-riscv32xcheri"
       else:
-        args.path_to_qemu += "/riscv64cheri-softmmu/qemu-system-riscv64cheri"
+        args.path_to_qemu += "/qemu-system-riscv64xcheri"
     cmd = [args.path_to_qemu, "--rvfi-dii-port", str(port),
-           "-cpu", isa_def.get_qemu_cpu(), "-bios", "none"]
+           "-cpu", isa_def.get_qemu_cpu(args.path_to_qemu), "-bios", "none"]
     if not isa_def.support_misaligned:
       sys.exit("FATAL: --support-misaligned must be passed for QEMU since there is no way of turning it off")
     if log:
