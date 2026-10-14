@@ -58,8 +58,13 @@ bits), `zcmt` (jump table reads are not checked against PCC/DDC) and `smrnmi`
 The gate runs `rv64imacZifencei_Xcheri` and passes `zba,zbb,zbc,zbs` to QEMU
 because the Sail model always implements the B extensions and cannot turn them
 off. The `unstructured` template does not generate CSR instructions on
-`mhpmevent3`-`31`: the privileged spec requires them (QEMU has them), but the
-Sail model does not.
+`mhpmevent3`-`31` (the privileged spec requires them and QEMU has them, but the
+Sail model does not), on `misa` (Sail always reports its full ISA there,
+including V and F/D), on the counters (`mcycle`, `minstret`, `time`, ...,
+whose values depend on timing and on how each implementation counts), or on the
+debug trigger CSRs (0x7a0-0x7af) and `mconfigptr`, which QEMU implements and the
+Sail model does not. Reading all 4096 CSR numbers in both implementations found
+no other differences.
 
 A test whose first difference is a store-conditional that succeeded on one
 side and failed on the other is discarded rather than failed: the ISA allows
