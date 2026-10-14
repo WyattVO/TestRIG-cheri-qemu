@@ -157,6 +157,10 @@ parser.add_argument('--path-to-spike', metavar='PATH', type=str,
   default=None, help="The PATH to the spike executable")
 parser.add_argument('--path-to-qemu', metavar='PATH', type=str,
   default=None, help="The PATH to the qemu executable")
+parser.add_argument('--qemu-cpu-extra', metavar='PROPS', type=str,
+  default=None, help="Extra comma-separated QEMU -cpu properties, e.g. to\
+  enable extensions that the other implementation always has but that the\
+  architecture string cannot express (zba=true,zbb=true)")
 parser.add_argument('--path-to-piccolo', metavar='PATH', type=str,
   default=op.join(implementations_path, "Piccolo/builds/RV32IMUxCHERI_RVFI_DII_Piccolo_bluesim/exe_HW_sim"),
   help="The PATH to the Piccolo executable")
@@ -498,8 +502,11 @@ def spawn_rvfi_dii_server(name, port, log, isa_def):
         args.path_to_qemu += "/qemu-system-riscv32xcheri"
       else:
         args.path_to_qemu += "/qemu-system-riscv64xcheri"
+    qemu_cpu = isa_def.get_qemu_cpu(args.path_to_qemu)
+    if args.qemu_cpu_extra:
+      qemu_cpu += "," + args.qemu_cpu_extra
     cmd = [args.path_to_qemu, "--rvfi-dii-port", str(port),
-           "-cpu", isa_def.get_qemu_cpu(args.path_to_qemu), "-bios", "none"]
+           "-cpu", qemu_cpu, "-bios", "none"]
     if not isa_def.support_misaligned:
       sys.exit("FATAL: --support-misaligned must be passed for QEMU since there is no way of turning it off")
     if log:
