@@ -41,6 +41,7 @@ program authority it could not already get; several remove authority.
 | `18-ccopytype-reserved-otype-in-place.S` | `ccopytype` with `cd == cs1` dropped the cleared tag when updating the register in place |
 | `19-ccseal-passthrough-untagged-sentry.S` | `ccseal` passes an already sealed `cs` through before checking its tag |
 | `20-csr-asr-fault-cause.S` | A CSR instruction without ASR in PCC raised a CHERI exception without its cause, which could abort QEMU |
+| `21-compressed-illegal-mtval.S` | An illegal compressed instruction reported the whole injected 32-bit word in `mtval` instead of its 16 bits |
 
 ## CHERI extension policy
 
