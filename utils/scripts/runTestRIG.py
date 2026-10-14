@@ -276,6 +276,17 @@ def probe_qemu_riscv_cpu(qemu_path, xlen):
   models = set(out.replace("Available CPUs:", "").split())
   return props, models
 
+def qemu_accepts_cpu(qemu_path, cpu):
+  """Whether QEMU starts with this -cpu value (for properties such as the
+  satp modes, which the model expansion does not report)."""
+  try:
+    sub.run([qemu_path, "-M", "virt", "-cpu", cpu, "-bios", "none", "-S",
+             "-display", "none", "-monitor", "none", "-serial", "none"],
+            capture_output=True, timeout=2)
+    return False
+  except sub.TimeoutExpired:
+    return True
+
 class ISA_Configuration:
   has_xlen_32 = False
   has_xlen_64 = False
@@ -428,6 +439,14 @@ class ISA_Configuration:
           sys.exit("FATAL: {} supports none of {} for extension '{}'".format(
             qemu_path, self.qemu_ext_spellings[ext], ext))
         print("WARNING: QEMU has no property for '{}'; leaving it at the default.".format(ext))
+    # The bare model has no MMU and no address translation modes, so satp
+    # writes would be ignored. Offer the modes the Sail model implements
+    # (Sv39, Sv48 on RV64), and like Sail raise a page fault instead of setting
+    # the A/D bits in hardware (Svade).
+    if wanted["s"]:
+      for mode in ["mmu", "svade"] + (["sv32"] if self.has_xlen_32 else ["sv39", "sv48"]):
+        if qemu_accepts_cpu(qemu_path, "{},{}=true".format(result, mode)):
+          settings.append((mode, True))
     result += "," + ",".join("{}={}".format(n, str(v).lower()) for n, v in settings)
     return result
 
