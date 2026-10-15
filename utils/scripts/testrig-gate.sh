@@ -2,7 +2,7 @@
 # TestRIG regression gate for CHERI QEMU (RISC-V, Xcheri v9).
 #
 # Compares a QEMU build against the Sail CHERI-RISC-V golden model over
-# RVFI-DII, in three stages:
+# RVFI-DII, in four stages:
 #   1. Check that QEMU refuses CPU extensions that bypass CHERI protection
 #      (see regressions/README.md) and still starts with the default CPUs.
 #   2. Replay every saved counter-example under regressions/ (bugs that were
@@ -100,7 +100,8 @@ done
 for dir in "$root"/regressions/*/; do
   [ "$(basename "$dir")" = qemu-only ] && continue
   echo "=== Replaying saved regressions: ${dir#$root/}"
-  run -d "$dir" || status=1
+  # Keep going after a failure so one regression doesn't hide another.
+  run -d "$dir" --continue-on-fail || status=1
 done
 
 echo "=== QEMU-only tests"

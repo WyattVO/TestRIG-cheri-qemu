@@ -123,3 +123,21 @@ the reserved value is unchanged.
   `sc.*` instead of an illegal instruction, because it checks the reservation
   first. QEMU raises illegal instruction. The gate enables A, so this does not
   occur there.
+
+## Checking the gate itself
+
+A gate that always passes proves nothing, so it was run against a deliberately
+broken QEMU (cheri-10.2 with these fixes reverted, 2026-10-14):
+
+| Reverted fix | Caught by |
+|---|---|
+| `tcg: Clear capability tags and trace stores in CHERI compare-and-swap` | regression `17-sc-clears-capability-tag.S` |
+| `tcg: Clear capability tags in the CHERI 128-bit compare-and-swap` | `qemu-only/amocas-q-clears-tag`, `qemu-only/amocas-wdb-clears-tag` |
+| `target/cheri-common: Check DDC/PCC accesses that wrap past the top` | regression `13-ddc-bounds-wrap.S` |
+| `target/riscv: Apply the CHERI extension policy to bare and profile CPUs` | policy checks `rv64i,v=true` and `rva23u64` |
+
+Every mutation failed the gate; the other 24 traces and all policy and
+QEMU-only checks still passed. Random tests alone (20 per template) caught
+none of them, which is why every fixed bug gets a saved trace or a QEMU-only
+test. The regression replay uses `--continue-on-fail`: without it, the first
+failing trace (13) skipped the remaining ones and hid trace 17.
