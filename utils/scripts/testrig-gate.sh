@@ -33,7 +33,7 @@ root=$(cd "$here/../.." && pwd)
 qemu=${1:?usage: $0 <qemu-system-riscv64xcheri> [tests-per-template]}
 ntests=${2:-100}
 arch=${ARCH:-rv64imsafdcZicsr_Zifencei_Xcheri}
-csr_exclude=${CSR_EXCLUDE-^(misa|mstatus|sstatus|mip|mie|mideleg|medeleg|sccsr|mhpmevent[0-9]+|m?cycleh?|m?instreth?|timeh?|m?hpmcounter[0-9]+h?|reserved)\$}
+csr_exclude=${CSR_EXCLUDE-^(misa|mstatus|sstatus|mscratch|sscratch|mip|mie|mideleg|medeleg|sccsr|mhpmevent[0-9]+|m?cycleh?|m?instreth?|timeh?|m?hpmcounter[0-9]+h?|reserved)\$}
 exclude=${EXCLUDE:-}
 cpu_extra=${QEMU_CPU_EXTRA-zba=true,zbb=true,zbc=true,zbs=true}
 qcv=${QCVENGINE:-$(find "$root/vengines/QuickCheckVEngine/dist-newstyle" -type f \

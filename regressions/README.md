@@ -104,6 +104,11 @@ than a QEMU bug:
   construction is not shrunk, so a counter-example cannot turn into one of those.
   CW = 0 is covered by `qemu-only/pte-cw-capability-store.S`; CD/CRM/CRG need a
   newer model (the sail-cheri-riscv `clg` branch has them).
+- `mscratch`/`sscratch` are excluded from CSR generation (all templates): QEMU
+  aliases them to the address of the `mscratchc`/`sscratchc` SCRs, while in the
+  Sail model they are separate registers. **Open question**, not yet changed:
+  the alias is long-standing (also in CHERI-Alliance) and grants no authority,
+  but it differs from Sail; decide after checking what CheriBSD expects.
 - `csc_*`, `bsc_*`, `tsc` and `hpm` need Zihpm counters, which cannot be compared.
 
 A test whose first difference is a store-conditional that succeeded on one
