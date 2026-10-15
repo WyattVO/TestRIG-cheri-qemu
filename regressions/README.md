@@ -62,6 +62,13 @@ cannot compare them. CHERI instructions are written with `.insn` (see
 | `amocas-wdb-clears-tag.S` | Same for `amocas.d`, `amocas.w` (Zacas) and `amocas.b` (Zabha) |
 | `pte-cw-capability-store.S` | Sv39 in S-mode: a tagged capability store to a page with CW clear raises cause 27, an untagged one succeeds, CW set keeps the tag. Sail never enforces CW |
 | `uxl-read-only.S` | `mstatus`/`sstatus` UXL stays RV64 |
+| `pte-crg-load-generation.S` | A tagged capability load from a CR+CRM page whose CRG differs from `sccsr.SGCLG` raises cause 26, also after the page is in the TLB; untagged and matching-generation loads do not (CheriBSD load-side revocation) |
+| `pte-cr-cd-tlb-flags.S` | After an ordinary access fills the TLB, a capability load from a CR = 0 page still drops the tag, and the first tagged store to a CD = 0 page still sets CD (or traps) |
+
+The last two caught QEMU 10.x storing the CHERI page flags in the 8-bit
+`CPUTLBEntryFull.prot` (found by `cheribsdtest-purecap`, see below). QEMU 7.1
+fails check 2 of `pte-cr-cd-tlb-flags.S`: it never re-walks a cached page to
+set CD.
 
 ## CHERI extension policy
 
@@ -135,9 +142,35 @@ broken QEMU (cheri-10.2 with these fixes reverted, 2026-10-14):
 | `tcg: Clear capability tags in the CHERI 128-bit compare-and-swap` | `qemu-only/amocas-q-clears-tag`, `qemu-only/amocas-wdb-clears-tag` |
 | `target/cheri-common: Check DDC/PCC accesses that wrap past the top` | regression `13-ddc-bounds-wrap.S` |
 | `target/riscv: Apply the CHERI extension policy to bare and profile CPUs` | policy checks `rv64i,v=true` and `rva23u64` |
+| `accel/tcg: Don't truncate the CHERI page protection bits in the TLB` (not yet written then; the bug was present) | `qemu-only/pte-crg-load-generation`, `qemu-only/pte-cr-cd-tlb-flags` (added later), and stage 5 (11 `cheri_revoke_*` failures) |
 
 Every mutation failed the gate; the other 24 traces and all policy and
 QEMU-only checks still passed. Random tests alone (20 per template) caught
 none of them, which is why every fixed bug gets a saved trace or a QEMU-only
 test. The regression replay uses `--continue-on-fail`: without it, the first
 failing trace (13) skipped the remaining ones and hid trace 17.
+
+## CheriBSD
+
+`cheribsdtest` is the end-to-end check: `utils/scripts/cheribsd-tests.py` (gate
+stage 5, enabled with `CHERIBSD_OUTPUT=<cheribuild output dir>`) boots the
+CheriBSD disk image built by cheribuild (`riscv64-purecap`, kernel
+`CHERI-PURECAP-QEMU`, snapshot mode) on `qemu-system-riscv64xcheri` and runs
+`cheribsdtest-purecap -a` and `cheribsdtest-hybrid -a`. Expected failures
+(XFAIL) are known CheriBSD limitations; any FAIL fails the gate.
+
+Results on cheri-10.2 (2026-10-14, cheribsd `main-88f39900c329`):
+
+| Suite | Before TLB fix | After |
+|---|---|---|
+| `cheribsdtest-purecap` | 294 passed, **11 failed**, 10 XFAIL | 305 passed, 10 XFAIL |
+| `cheribsdtest-hybrid` | 149 passed, 52 XFAIL | 149 passed, 52 XFAIL |
+| `-purecap-mt` / `-dynamic` / `-dynamic-mt` | | 307 / 314 / 316 passed, 10 XFAIL |
+| `-hybrid-mt` / `-dynamic` / `-dynamic-mt` | | 150 / 157 / 158 passed, 52 XFAIL |
+
+The 11 failures were all `cheri_revoke_*` (QEMU 7.1 passes them): QEMU 10.x
+kept the CHERI page flags in the 8-bit `CPUTLBEntryFull.prot`, so a revoked
+capability survived load-side revocation. Fixed by cheri-qemu-port
+`accel/tcg: Don't truncate the CHERI page protection bits in the TLB`;
+`qemu-only/pte-crg-load-generation.S` and `qemu-only/pte-cr-cd-tlb-flags.S`
+now catch it in seconds.

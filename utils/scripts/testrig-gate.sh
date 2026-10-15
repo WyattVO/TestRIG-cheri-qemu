@@ -2,7 +2,7 @@
 # TestRIG regression gate for CHERI QEMU (RISC-V, Xcheri v9).
 #
 # Compares a QEMU build against the Sail CHERI-RISC-V golden model over
-# RVFI-DII, in four stages:
+# RVFI-DII, in four stages, and optionally boots CheriBSD on it:
 #   1. Check that QEMU refuses CPU extensions that bypass CHERI protection
 #      (see regressions/README.md) and still starts with the default CPUs.
 #   2. Replay every saved counter-example under regressions/ (bugs that were
@@ -11,6 +11,8 @@
 #      properties of QEMU features the Sail model lacks (needs CROSS_CC or
 #      riscv64-linux-gnu-gcc; skipped with a warning if missing).
 #   4. Run every QuickCheckVEngine template with fresh random tests.
+#   5. If CHERIBSD_OUTPUT is set, boot CheriBSD and run cheribsdtest-purecap
+#      and cheribsdtest-hybrid (utils/scripts/cheribsd-tests.py, ~30 min).
 # Exits non-zero if any stage fails.
 #
 # Usage: testrig-gate.sh <path/to/qemu-system-riscv64xcheri> [tests-per-template]
@@ -26,6 +28,8 @@
 #             which the Sail model always implements)
 #   QCVENGINE path to the QCVEngine binary (default: newest cabal build)
 #   CROSS_CC  RISC-V cross compiler for the QEMU-only tests
+#   CHERIBSD_OUTPUT  cheribuild output directory with a riscv64-purecap
+#             CheriBSD disk image (default: unset, stage 5 skipped)
 set -u
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -113,6 +117,12 @@ fi
 
 echo "=== Random tests: $ntests per template (excluding: ${exclude:-none})"
 run -n "$ntests" ${exclude:+--test-exclude-regex "$exclude"} || status=1
+
+if [ -n "${CHERIBSD_OUTPUT:-}" ]; then
+  echo "=== CheriBSD tests"
+  python3 "$here/cheribsd-tests.py" "$qemu" "$CHERIBSD_OUTPUT" \
+    --log "${CHERIBSD_LOG:-cheribsd-tests.log}" || status=1
+fi
 
 if [ $status -eq 0 ]; then
   echo "TESTRIG GATE: PASS"
