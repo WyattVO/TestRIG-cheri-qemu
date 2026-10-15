@@ -101,6 +101,18 @@ than a QEMU bug:
   `misa` (Sail always reports V and F/D), `mhpmevent3`-`31`, the counters
   (timing-dependent), the debug trigger CSRs (0x7a0-0x7af) or `mconfigptr`.
   A read and a write-form access of all 4096 CSR numbers found no other differences.
+  It also skips `mip`: bit 7 (MTIP) reflects each implementation's timer. Sail
+  advances `mtime` once every 100 instructions with `mtimecmp` left at 0, so
+  MTIP goes pending at the 100th instruction of a test, while QEMU's `mtime`
+  follows host time and its RVFI-DII mode never lets the timer fire. Masking
+  MTIP in the comparison is not enough (the value read lands in a register and
+  diverges later), so MTIP is never compared and the other `mip` bits are not
+  compared by random tests either; trace 22 still checks `mip` after reset. A
+  test that actually takes the timer interrupt would still diverge.
+  Finally it skips `cspecialrw` on SCRs the Sail model cannot handle: `utidc`,
+  `stidc`, `mtidc` (3, 11, 27; QEMU implements the thread ID capability
+  registers, Sail raises illegal instruction) and 0x14-0x17 (missing from
+  Sail's `scr_name_map`, so the model aborts and ends the run).
 - `csr` (`CSR_EXCLUDE`) skips those plus `mstatus`/`sstatus` (Sail has the vector
   VS field), `mip`/`mie`/`mideleg`/`medeleg` (Sail's legalizers are marked FIXME
   and allow bits QEMU correctly keeps zero), `sccsr` (Sail lacks the
