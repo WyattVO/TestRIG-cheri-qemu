@@ -48,6 +48,7 @@ program authority it could not already get; several remove authority.
 | `25-fetch-page-fault.S` | RVFI-DII gave every instruction fetch a fake 1:1 mapping, so QEMU never took instruction page/access faults |
 | `26-paged-store-physical-address.S` | RVFI-DII reported virtual instead of physical `rvfi_mem_addr` for paged accesses (here a store rewrites its own PTE) |
 | `27-cgettop.S` | `cgettop` (in the Sail model since 2022) was not implemented and raised an illegal instruction; QEMU's CHERI templates never generate it |
+| `28-sc-b-last-byte.S` | `sc.b` to `0xffffffffffffffff` without a reservation matched QEMU's "no reservation" value (`load_res == -1`) and took a load access fault instead of failing (also in CHERI-QEMU 7.1) |
 
 ## qemu-only
 
