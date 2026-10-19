@@ -50,6 +50,37 @@ program authority it could not already get; several remove authority.
 | `27-cgettop.S` | `cgettop` (in the Sail model since 2022) was not implemented and raised an illegal instruction; QEMU's CHERI templates never generate it |
 | `28-sc-b-last-byte.S` | `sc.b` to `0xffffffffffffffff` without a reservation matched QEMU's "no reservation" value (`load_res == -1`) and took a load access fault instead of failing (also in CHERI-QEMU 7.1) |
 
+## cheri-guards
+
+Traces that pass today and pin CHERI behaviour that a change to QEMU's shared
+code (or a later QEMU rebase) is likely to break. Replayed like the
+regressions above.
+
+| Trace | Property |
+|---|---|
+| `01-failed-sc-cheri-check-first.S` | An SC without a reservation to an address outside DDC raises a CHERI length fault (the CHERI check comes before the reservation check, as in Sail); in-bounds SCs without a reservation just fail; AMOs outside DDC fault too |
+
+## open-bugs
+
+Traces of known QEMU bugs that are not fixed yet. The gate replays each one
+and expects it to fail (`xfail`); it reports `XPASS` once one passes, and the
+trace should then move to `cheri-qemu-10.2/`.
+
+| Trace | Bug |
+|---|---|
+| `01-sc-needs-store-permission.S` | `sc.w`/`sc.d` check their address with the *load* check (`get_capmode_dependent_load_addr` in `trans_rva.c.inc`), so with a DDC (or, in capability mode, a capability) that has Load but not Store permission, a reserved SC succeeds and writes memory. Sail raises a PermitStore fault (mtval `0x433`). Found 2026-10-19; the same code is in CHERI-QEMU 7.1 |
+
+## Reviewed CPU extensions
+
+`cheri-extensions.txt` lists every extension property QEMU offers (QMP
+expansion of `-cpu max`) as `allowed` or `refused`, with the test that covers
+it. Gate stage 1 (`utils/scripts/cheri-ext-review.py`) fails on an extension
+that is missing from the list, on a listed one QEMU no longer has, and on a
+`refused` one the policy does not refuse. It also starts every CPU model and
+fails if one crashes QEMU. A QEMU update that adds extensions (QEMU 11 adds
+Zalasr, Zilsd/Zclsd, Smpmpmt, Zvfbfa, Xmipslsp, a big-endian property and
+several CPU models) therefore fails the gate until each one is reviewed.
+
 ## qemu-only
 
 Bare-metal programs run directly on QEMU by `utils/scripts/qemu-only-tests.sh`
@@ -66,6 +97,26 @@ cannot compare them. CHERI instructions are written with `.insn` (see
 | `uxl-read-only.S` | `mstatus`/`sstatus` UXL stays RV64 |
 | `pte-crg-load-generation.S` | A tagged capability load from a CR+CRM page whose CRG differs from `sccsr.SGCLG` raises cause 26, also after the page is in the TLB; untagged and matching-generation loads do not (CheriBSD load-side revocation) |
 | `pte-cr-cd-tlb-flags.S` | After an ordinary access fills the TLB, a capability load from a CR = 0 page still drops the tag, and the first tagged store to a CD = 0 page still sets CD (or traps) |
+| `pte-cheri-bits-not-reserved.S` | Ordinary fetches, loads and stores work on pages with any valid mix of CW/CR/CD/CRM/CRG, including CR = CD = 1 (Svpbmt's reserved PBMT = 3) and CW alone (Svnapot's N bit): those PTE bits belong to CHERI on v9 |
+| `pte-cheri-bits-flush.S` | Clearing CR or CW in a PTE takes effect after `sfence.vma <va>` and after Svinval's `sinval.vma`, even though the old entry was in the TLB; setting CW again restores capability stores |
+| `pte-cd-update-pmp.S` | **XFAIL on 10.2.** With Svadu, the PTE write that sets CD must pass PMP: a capability store whose CD update hits a read-only page table raises a store access fault. QEMU 10.2 writes the PTE anyway (fixed upstream in QEMU 11, `fa2cf74883`) |
+| `pmp-capability-access.S` | PMP checks all 16 bytes of a capability store/load: one that overlaps a no-access PMP region faults without a partial write or a tag |
+| `cbo-zero-cheri.S` | `cbo.zero` (Zicboz) clears the tags of every capability in the 64-byte block, needs Store permission in its authority and the whole block in bounds |
+| `ext-mem-insns-cheri.S` | Zcb (`c.lbu`/`c.lhu`/`c.sb`/`c.sh`), Zfh (`flh`/`fsh`), Zacas, Zabha and Zicbom instructions clear the tags they overwrite and obey DDC bounds and Store permission |
+| `ext-mem-insns-capmode.S` | The same instructions in capability mode (purecap CheriBSD's mode): the address capability, not DDC, is checked |
+| `xthead-mem-cheri.S` | XTheadMemIdx/XTheadMemPair (accepted on CHERI CPUs) clear tags and obey DDC bounds and Store permission |
+| `pcc-bounds-cached-tb.S` | Code first translated under the full PCC still has its fetches checked when later run under a PCC covering one instruction (PCC bounds are part of QEMU's translation cache key) |
+| `data-endianness-fixed.S` | `mstatus` MBE/SBE/UBE stay 0 and data accesses stay little-endian (one capability memory format) |
+
+A `# XFAIL: <reason>` line marks a test that is known to fail; it is
+reported as `xfail` and does not fail the gate (`XPASS` when it starts
+passing). `cheri-v9.h` has shared macros for these tests, including an
+expected-trap handler (`check`, `trap_expect`, `expected_trap_handler`).
+
+Each new test was checked against a deliberately broken QEMU (2026-10-19):
+`cbo.zero` without tag invalidation fails `cbo-zero-cheri` check 1, and
+upstream QEMU 11's unconditional PBMT check fails `pte-cheri-bits-not-reserved`,
+`pte-cheri-bits-flush` and the older PTE tests.
 
 The last two caught QEMU 10.x storing the CHERI page flags in the 8-bit
 `CPUTLBEntryFull.prot` (found by `cheribsdtest-purecap`, see below). QEMU 7.1

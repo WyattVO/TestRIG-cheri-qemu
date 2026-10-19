@@ -5,8 +5,14 @@
 # RVFI-DII, in four stages, and optionally boots CheriBSD on it:
 #   1. Check that QEMU refuses CPU extensions that bypass CHERI protection
 #      (see regressions/README.md) and still starts with the default CPUs.
+#      Also check that every CPU extension QEMU offers has been reviewed for
+#      CHERI (regressions/cheri-extensions.txt, cheri-ext-review.py), so a
+#      QEMU rebase cannot enable a new extension silently.
 #   2. Replay every saved counter-example under regressions/ (bugs that were
-#      found and fixed must stay fixed).
+#      found and fixed must stay fixed, cheri-guards/ pins CHERI behaviour a
+#      rebase is likely to change). regressions/open-bugs/ holds traces of
+#      known, unfixed bugs: each must still fail (reported, not fatal); one
+#      that passes is reported as XPASS and should move to cheri-qemu-10.2/.
 #   3. Run the bare-metal tests in regressions/qemu-only, which check CHERI
 #      properties of QEMU features the Sail model lacks (needs CROSS_CC or
 #      riscv64-linux-gnu-gcc; skipped with a warning if missing).
@@ -73,11 +79,13 @@ qemu_start() {
   fi
 }
 
-# expect <started|refused|rejected> <cpu> <description>
+# expect <started|refused|rejected|not-started> <cpu> <description>
+# ("not-started": refused or rejected, e.g. a property this QEMU lacks)
 expect() {
   local got
   got=$(qemu_start "$2")
-  if [ "$got" = "$1" ]; then
+  if [ "$got" = "$1" ] || { [ "$1" = not-started ] &&
+      { [ "$got" = refused ] || [ "$got" = rejected ]; }; }; then
     echo "ok: -cpu $2 $1 ($3)"
   else
     echo "FAIL: -cpu $2 $got, expected $1 ($3)"; status=1
@@ -100,12 +108,28 @@ done
 for cpu in rv32 codasip-l730; do
   expect rejected "$cpu" "RV32 CPU in a 64-bit CHERI build"
 done
+# Capabilities have one little-endian memory format; QEMU 11 adds big-endian
+# harts (10.2 has no such property and rejects it).
+expect not-started "rv64,big-endian=true" "big-endian data accesses"
+# New extensions (e.g. QEMU 11's Zalasr, Zilsd, Xmipslsp) fail here until
+# they are reviewed for CHERI.
+python3 "$here/cheri-ext-review.py" "$qemu" || status=1
 
 for dir in "$root"/regressions/*/; do
-  [ "$(basename "$dir")" = qemu-only ] && continue
+  case $(basename "$dir") in qemu-only|open-bugs) continue ;; esac
   echo "=== Replaying saved regressions: ${dir#$root/}"
   # Keep going after a failure so one regression doesn't hide another.
   run -d "$dir" --continue-on-fail || status=1
+done
+
+echo "=== Known open bugs (must still fail): regressions/open-bugs"
+for trace in "$root"/regressions/open-bugs/*.S; do
+  [ -e "$trace" ] || continue
+  if run -t "$trace" >/dev/null 2>&1; then
+    echo "XPASS: ${trace#$root/} passes now; move it to regressions/cheri-qemu-10.2/"
+  else
+    echo "xfail: ${trace#$root/}"
+  fi
 done
 
 echo "=== QEMU-only tests"

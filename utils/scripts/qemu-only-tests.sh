@@ -5,7 +5,9 @@
 # implement, so TestRIG cannot compare them. Each test exits through the virt
 # machine's test device: exit status 0 is a pass, N is failed check N (99 is
 # an unexpected trap). A "# QEMU_CPU: <cpu>" line selects the -cpu value
-# (default rv64).
+# (default rv64). A "# XFAIL: <reason>" line marks a known failure: it is
+# reported but does not fail the run, and passing is reported as XPASS (then
+# remove the line).
 #
 # Usage: qemu-only-tests.sh <path/to/qemu-system-riscv64xcheri>
 #
@@ -26,6 +28,7 @@ status=0
 for src in "$dir"/*.S; do
   name=$(basename "$src" .S)
   cpu=$(sed -n 's/^# QEMU_CPU: *//p' "$src" | head -1)
+  xfail=$(sed -n 's/^# XFAIL: *//p' "$src" | head -1)
   if ! "$cc" -march=rv64gc -mabi=lp64 -nostdlib -nostartfiles -static \
       -I "$dir" -T "$dir/link.ld" -o "$tmp/$name.elf" "$src"; then
     echo "FAIL: $name does not assemble"; status=1; continue
@@ -34,6 +37,14 @@ for src in "$dir"/*.S; do
     -kernel "$tmp/$name.elf" -display none -monitor none -serial none \
     >"$tmp/$name.log" 2>&1
   rc=$?
+  if [ -n "$xfail" ]; then
+    if [ $rc -eq 0 ]; then
+      echo "XPASS: $name passes now; remove its XFAIL line ($xfail)"
+    else
+      echo "xfail: $name (exit $rc: $xfail)"
+    fi
+    continue
+  fi
   case $rc in
     0)   echo "ok: $name" ;;
     124) echo "FAIL: $name timed out"; status=1 ;;

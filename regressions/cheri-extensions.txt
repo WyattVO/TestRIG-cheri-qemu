@@ -1,0 +1,162 @@
+# CHERI review of every RISC-V extension property the QEMU under test offers
+# (checked by utils/scripts/cheri-ext-review.py, gate stage 1).
+#
+#   <property> allowed|refused   # why, and which test covers it
+#
+# "refused": the CHERI extension policy must refuse it (it bypasses
+# capability checks). "allowed": accepted on CHERI CPUs. An extension that
+# loads, stores, changes addresses, control flow or PTE/privileged state may
+# only be "allowed" once its CHERI behaviour is implemented and tested.
+# When a QEMU rebase adds an extension, the gate fails until it is listed.
+
+# CHERI itself and base machine features
+Xcheri          allowed
+Xcheri_v9       allowed
+mmu             allowed   # paging: pte template, qemu-only pte-* tests
+pmp             allowed   # qemu-only pmp-capability-access, pte-cd-update-pmp
+sha             allowed   # hypervisor; h itself is refused by the misa policy
+x-svukte        allowed   # experimental, off; user-mode address checks only
+
+# Profiles (enable sets of the extensions below; the policy still applies)
+rva22u64        allowed
+rva23u64        allowed   # requires vector: refused (gate policy check)
+
+# Atomics
+zaamo           allowed   # AMOs: random tests vs Sail
+zalrsc          allowed   # LR/SC: traces 17, 28, cheri-guards/01, open-bugs/01
+zacas           allowed   # qemu-only amocas-q-clears-tag, amocas-wdb-clears-tag
+zabha           allowed   # qemu-only amocas-wdb-clears-tag
+zama16b         allowed   # misaligned-atomicity guarantee only
+zawrs           allowed   # wrs.nto/wrs.sto: wait, no memory access
+ztso            allowed   # memory ordering only
+
+# Compressed
+zca             allowed   # random tests vs Sail
+zcb             allowed   # c.lbu/c.sb etc. use the normal CHERI load/store path
+zcd             allowed
+zce             allowed   # off on RV64 with D
+zcf             allowed   # RV32 only
+zcmop           allowed   # may-be-operations, no memory access
+zcmp            allowed   # push/pop: compiled out on CHERI (illegal instruction)
+zcmt            refused   # jump table reads not checked against PCC/DDC
+
+# Bit manipulation, crypto, integer, FP (no memory access of their own)
+zba             allowed
+zbb             allowed
+zbc             allowed
+zbkb            allowed
+zbkc            allowed
+zbkx            allowed
+zbs             allowed
+zk              allowed
+zkn             allowed
+zknd            allowed
+zkne            allowed
+zknh            allowed
+zkr             allowed   # seed CSR; excluded from comparison (random)
+zks             allowed
+zksed           allowed
+zksh            allowed
+zkt             allowed
+zmmul           allowed
+zicond          allowed
+zimop           allowed
+zihintntl       allowed
+zihintpause     allowed
+zfa             allowed
+zfbfmin         allowed
+zfh             allowed
+zfhmin          allowed
+zfinx           allowed
+zdinx           allowed
+zhinx           allowed
+zhinxmin        allowed
+
+# Base ISA pieces and counters
+zicsr           allowed
+zifencei        allowed
+zicntr          allowed   # counters: not comparable with Sail
+zihpm           allowed
+ziccrse         allowed
+zic64b          allowed
+
+# Cache-block operations
+zicbom          allowed   # clean/flush/inval: _cap helpers check the authority
+zicbop          allowed   # prefetch hints, no access
+zicboz          allowed   # qemu-only cbo-zero-cheri
+
+# Privileged / supervisor features
+smaia           allowed
+ssaia           allowed
+smcdeleg        allowed
+smcntrpmf       allowed
+smcsrind        allowed
+sscsrind        allowed
+smctr           allowed   # control transfer records: record addresses only
+ssctr           allowed
+smdbltrp        allowed
+ssdbltrp        allowed
+smepmp          allowed
+smstateen       allowed
+ssstateen       allowed
+ssccfg          allowed
+sscofpmf        allowed
+sstc            allowed
+svade           allowed   # gate runs with it (Sail behaviour)
+svadu           allowed   # hardware A/D (and CD) updates: pte-cr-cd-tlb-flags, pte-cd-update-pmp
+svinval         allowed
+svvptc          allowed
+smrnmi          refused   # mnret changes privilege without restoring PCC
+svrsw60t59b     refused   # PTE bits 59-60 are CHERI CRG/CRM
+
+# Pointer masking: changes addresses after the capability checks
+smmpm           refused
+smnpm           refused
+ssnpm           refused
+sspm            refused
+supm            refused
+
+# Control-flow integrity
+zicfilp         refused   # capability jumps don't set the landing-pad state
+zicfiss         refused   # shadow stack accesses not checked against DDC
+
+# Vector: vector loads/stores use raw addresses
+zve32f          refused
+zve32x          refused
+zve64d          refused
+zve64f          refused
+zve64x          refused
+zvbb            refused
+zvbc            refused
+zvfbfmin        refused
+zvfbfwma        refused
+zvfh            refused
+zvfhmin         refused
+zvkb            refused
+zvkg            refused
+zvkn            refused
+zvknc           refused
+zvkned          refused
+zvkng           refused
+zvknha          refused
+zvknhb          refused
+zvks            refused
+zvksc           refused
+zvksed          refused
+zvksg           refused
+zvksh           refused
+zvkt            refused
+
+# Vendor extensions
+xtheadba        allowed
+xtheadbb        allowed
+xtheadbs        allowed
+xtheadcmo       allowed   # cache maintenance, no data access
+xtheadcondmov   allowed
+xtheadfmemidx   allowed   # FP indexed loads/stores via gen_ddc_interposed_*
+xtheadfmv       allowed
+xtheadmac       allowed
+xtheadmemidx    allowed   # qemu-only xthead-mem-cheri
+xtheadmempair   allowed   # qemu-only xthead-mem-cheri
+xtheadsync      allowed
+xventanacondops allowed
