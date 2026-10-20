@@ -49,6 +49,8 @@ program authority it could not already get; several remove authority.
 | `26-paged-store-physical-address.S` | RVFI-DII reported virtual instead of physical `rvfi_mem_addr` for paged accesses (here a store rewrites its own PTE) |
 | `27-cgettop.S` | `cgettop` (in the Sail model since 2022) was not implemented and raised an illegal instruction; QEMU's CHERI templates never generate it |
 | `28-sc-b-last-byte.S` | `sc.b` to `0xffffffffffffffff` without a reservation matched QEMU's "no reservation" value (`load_res == -1`) and took a load access fault instead of failing (also in CHERI-QEMU 7.1) |
+| `29-sc-needs-store-permission.S` | `sc.w`/`sc.d` (and the explicit `sc.*.ddc`/`sc.*.cap` forms) checked their address with the *load* check, so a reserved SC through a Load-only DDC or capability wrote memory; Sail raises PermitStore (also in CHERI-QEMU 7.1; found by the open-bugs trace 2026-10-19) |
+| `30-cap-atomics-store-permissions.S` | `sc.c`/`amoswap.c` required StoreCap even for an untagged value and named the stored register instead of the authority for StoreLocalCap violations (Sail checks both only for tagged values and names the authority; found by the test bench 2026-10-20) |
 
 ## cheri-guards
 
@@ -66,9 +68,8 @@ Traces of known QEMU bugs that are not fixed yet. The gate replays each one
 and expects it to fail (`xfail`); it reports `XPASS` once one passes, and the
 trace should then move to `cheri-qemu-10.2/`.
 
-| Trace | Bug |
-|---|---|
-| `01-sc-needs-store-permission.S` | `sc.w`/`sc.d` check their address with the *load* check (`get_capmode_dependent_load_addr` in `trans_rva.c.inc`), so with a DDC (or, in capability mode, a capability) that has Load but not Store permission, a reserved SC succeeds and writes memory. Sail raises a PermitStore fault (mtval `0x433`). Found 2026-10-19; the same code is in CHERI-QEMU 7.1 |
+None at the moment. The first one, a store-conditional without Store
+permission, was fixed and is now `cheri-qemu-10.2/29-sc-needs-store-permission.S`.
 
 ## Reviewed CPU extensions
 
@@ -94,6 +95,8 @@ cannot compare them. CHERI instructions are written with `.insn` (see
 | `amocas-q-clears-tag.S` | A successful `amocas.q` clears the overwritten capability's tag; a failed one changes nothing |
 | `amocas-wdb-clears-tag.S` | Same for `amocas.d`, `amocas.w` (Zacas) and `amocas.b` (Zabha) |
 | `pte-cw-capability-store.S` | Sv39 in S-mode: a tagged capability store to a page with CW clear raises cause 27, an untagged one succeeds, CW set keeps the tag. Sail never enforces CW |
+| `smp-tag-consistency.S` | Two harts (`# QEMU_SMP: 2`): while hart 1 alternately stores a capability and plain data into a slot, every tagged capability hart 0 loads from it is hart 1's capability (never a tag on plain data); a plain store from one hart clears the tag of a capability another hart stored |
+| `tag-clear-store-widths.S` | Every store width and kind (sb/sh/sw/sd, fsw/fsd, c.sw/c.sd) clears the tag of exactly the capability it writes into; misaligned stores crossing two capabilities clear both; loads and stores outside a capability leave it tagged |
 | `uxl-read-only.S` | `mstatus`/`sstatus` UXL stays RV64 |
 | `pte-crg-load-generation.S` | A tagged capability load from a CR+CRM page whose CRG differs from `sccsr.SGCLG` raises cause 26, also after the page is in the TLB; untagged and matching-generation loads do not (CheriBSD load-side revocation) |
 | `pte-cr-cd-tlb-flags.S` | After an ordinary access fills the TLB, a capability load from a CR = 0 page still drops the tag, and the first tagged store to a CD = 0 page still sets CD (or traps) |
@@ -101,17 +104,35 @@ cannot compare them. CHERI instructions are written with `.insn` (see
 | `pte-cheri-bits-flush.S` | Clearing CR or CW in a PTE takes effect after `sfence.vma <va>` and after Svinval's `sinval.vma`, even though the old entry was in the TLB; setting CW again restores capability stores |
 | `pte-cd-update-pmp.S` | **XFAIL on 10.2.** With Svadu, the PTE write that sets CD must pass PMP: a capability store whose CD update hits a read-only page table raises a store access fault. QEMU 10.2 writes the PTE anyway (fixed upstream in QEMU 11, `fa2cf74883`) |
 | `pmp-capability-access.S` | PMP checks all 16 bytes of a capability store/load: one that overlaps a no-access PMP region faults without a partial write or a tag |
+| `asr-permission.S` | Without ASR in PCC, privileged CSRs (read and write), privileged SCRs (MTCC), `mret` and `cbo.inval` raise a CHERI ASR fault on PCC (mtval `0x418`) and have no effect; user CSRs, DDC and ordinary memory accesses still work |
+| `cheri-fault-delegation.S` | A CHERI fault in a U-mode capability-mode program is delegated to S-mode through `medeleg` bit 28, with the right `scause`, `stval` (register and cause) and the full user PCC in SEPCC; `sret` returns to the program in capability mode |
+| `cbo-inval-bounds.S` | `cbo.clean`/`cbo.flush` need only one byte of the block in bounds, but `cbo.inval` needs all of it (riscv-cheri spec, `cbo_exceptions.adoc`): invalidating a partly covered block could re-expose older data and capabilities. QEMU 10.2 only rejected blocks entirely outside the bounds (fixed 2026-10-19) |
 | `cbo-zero-cheri.S` | `cbo.zero` (Zicboz) clears the tags of every capability in the 64-byte block, needs Store permission in its authority and the whole block in bounds |
+| `dma-clears-tags.S` | A device writing guest memory by DMA (fw_cfg) clears the tag of the capability it writes into, even partly, and leaves neighbouring capabilities tagged |
+| `ext-functional.S` | 10.2 extensions Sail lacks compute spec results in the CHERI build: Zicond, Zfh, Zfa, Zcb, Zbkb, Zimop/Zcmop, Zawrs/Zihintpause, Sstc (`stimecmp` drives `mip.STIP`), Zicbop (prefetches never fault, even outside DDC), Zicntr |
 | `ext-mem-insns-cheri.S` | Zcb (`c.lbu`/`c.lhu`/`c.sb`/`c.sh`), Zfh (`flh`/`fsh`), Zacas, Zabha and Zicbom instructions clear the tags they overwrite and obey DDC bounds and Store permission |
 | `ext-mem-insns-capmode.S` | The same instructions in capability mode (purecap CheriBSD's mode): the address capability, not DDC, is checked |
+| `sc-store-permission.S` | Store-conditionals need Store (not Load) permission: `sc.w` with a Load-only DDC, the explicit `sc.w.ddc`/`sc.w.cap` forms (not in Sail) and `sc.w`/`sc.d` in capability mode raise PermitStore; an SC through a Store-only capability succeeds |
 | `xthead-mem-cheri.S` | XTheadMemIdx/XTheadMemPair (accepted on CHERI CPUs) clear tags and obey DDC bounds and Store permission |
+| `interrupt-capmode.S` | An interrupt that arrives in capability mode with a small PCC (M-mode MSI, and an SSI delegated to S-mode) saves the whole PCC in MEPCC/SEPCC (tag, mode flag, bounds, address), runs the handler with MTCC/STCC, and `mret`/`sret` return to capability mode with the same PCC. RVFI-DII never delivers interrupts, so TestRIG cannot check this |
 | `pcc-bounds-cached-tb.S` | Code first translated under the full PCC still has its fetches checked when later run under a PCC covering one instruction (PCC bounds are part of QEMU's translation cache key) |
 | `data-endianness-fixed.S` | `mstatus` MBE/SBE/UBE stay 0 and data accesses stay little-endian (one capability memory format) |
 
-A `# XFAIL: <reason>` line marks a test that is known to fail; it is
+A `# QEMU_SMP: <n>` line runs a test with n harts. A `# XFAIL: <reason>` line marks a test that is known to fail; it is
 reported as `xfail` and does not fail the gate (`XPASS` when it starts
 passing). `cheri-v9.h` has shared macros for these tests, including an
 expected-trap handler (`check`, `trap_expect`, `expected_trap_handler`).
+
+### SMP and MTTCG
+
+QEMU runs CHERI harts round-robin on one host thread by default (it does not
+enable MTTCG for CHERI targets). With `-accel tcg,thread=multi`, QEMU warns
+that CHERI tags are not thread-safe, and that is real:
+`smp-tag-consistency.S` then fails check 1 every time (hart 0 loads a tagged
+capability made of hart 1's plain data, i.e. a forged capability), and any
+`cbo.zero` aborts QEMU (an assertion in `do_cbo_zero`). Never run CHERI
+guests with MTTCG. `cheribsd-tests.py --smp N` boots CheriBSD with N harts
+(round-robin) for the kernel's SMP paths.
 
 Each new test was checked against a deliberately broken QEMU (2026-10-19):
 `cbo.zero` without tag invalidation fails `cbo-zero-cheri` check 1, and

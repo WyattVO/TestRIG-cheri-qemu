@@ -27,7 +27,7 @@ zalrsc          allowed   # LR/SC: traces 17, 28, cheri-guards/01, open-bugs/01
 zacas           allowed   # qemu-only amocas-q-clears-tag, amocas-wdb-clears-tag
 zabha           allowed   # qemu-only amocas-wdb-clears-tag
 zama16b         allowed   # misaligned-atomicity guarantee only
-zawrs           allowed   # wrs.nto/wrs.sto: wait, no memory access
+zawrs           allowed   # wrs.nto/wrs.sto: no memory access; qemu-only ext-functional
 ztso            allowed   # memory ordering only
 
 # Compressed
@@ -36,7 +36,7 @@ zcb             allowed   # c.lbu/c.sb etc. use the normal CHERI load/store path
 zcd             allowed
 zce             allowed   # off on RV64 with D
 zcf             allowed   # RV32 only
-zcmop           allowed   # may-be-operations, no memory access
+zcmop           allowed   # qemu-only ext-functional
 zcmp            allowed   # push/pop: compiled out on CHERI (illegal instruction)
 zcmt            refused   # jump table reads not checked against PCC/DDC
 
@@ -44,7 +44,7 @@ zcmt            refused   # jump table reads not checked against PCC/DDC
 zba             allowed
 zbb             allowed
 zbc             allowed
-zbkb            allowed
+zbkb            allowed   # qemu-only ext-functional
 zbkc            allowed
 zbkx            allowed
 zbs             allowed
@@ -59,13 +59,13 @@ zksed           allowed
 zksh            allowed
 zkt             allowed
 zmmul           allowed
-zicond          allowed
-zimop           allowed
+zicond          allowed   # qemu-only ext-functional
+zimop           allowed   # qemu-only ext-functional
 zihintntl       allowed
-zihintpause     allowed
-zfa             allowed
+zihintpause     allowed   # qemu-only ext-functional
+zfa             allowed   # qemu-only ext-functional
 zfbfmin         allowed
-zfh             allowed
+zfh             allowed   # qemu-only ext-functional, ext-mem-insns-*
 zfhmin          allowed
 zfinx           allowed
 zdinx           allowed
@@ -75,14 +75,14 @@ zhinxmin        allowed
 # Base ISA pieces and counters
 zicsr           allowed
 zifencei        allowed
-zicntr          allowed   # counters: not comparable with Sail
+zicntr          allowed   # counters: not comparable with Sail; qemu-only ext-functional
 zihpm           allowed
 ziccrse         allowed
 zic64b          allowed
 
 # Cache-block operations
-zicbom          allowed   # clean/flush/inval: _cap helpers check the authority
-zicbop          allowed   # prefetch hints, no access
+zicbom          allowed   # qemu-only cbo-inval-bounds, ext-mem-insns-*
+zicbop          allowed   # prefetch hints never fault: qemu-only ext-functional
 zicboz          allowed   # qemu-only cbo-zero-cheri
 
 # Privileged / supervisor features
@@ -101,7 +101,7 @@ smstateen       allowed
 ssstateen       allowed
 ssccfg          allowed
 sscofpmf        allowed
-sstc            allowed
+sstc            allowed   # qemu-only ext-functional
 svade           allowed   # gate runs with it (Sail behaviour)
 svadu           allowed   # hardware A/D (and CD) updates: pte-cr-cd-tlb-flags, pte-cd-update-pmp
 svinval         allowed

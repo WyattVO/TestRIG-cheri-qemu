@@ -5,7 +5,8 @@
 # implement, so TestRIG cannot compare them. Each test exits through the virt
 # machine's test device: exit status 0 is a pass, N is failed check N (99 is
 # an unexpected trap). A "# QEMU_CPU: <cpu>" line selects the -cpu value
-# (default rv64). A "# XFAIL: <reason>" line marks a known failure: it is
+# (default rv64) and "# QEMU_SMP: <n>" the number of harts (default 1; the
+# harts run round-robin, QEMU's default for CHERI). A "# XFAIL: <reason>" line marks a known failure: it is
 # reported but does not fail the run, and passing is reported as XPASS (then
 # remove the line).
 #
@@ -29,11 +30,12 @@ for src in "$dir"/*.S; do
   name=$(basename "$src" .S)
   cpu=$(sed -n 's/^# QEMU_CPU: *//p' "$src" | head -1)
   xfail=$(sed -n 's/^# XFAIL: *//p' "$src" | head -1)
+  smp=$(sed -n 's/^# QEMU_SMP: *//p' "$src" | head -1)
   if ! "$cc" -march=rv64gc -mabi=lp64 -nostdlib -nostartfiles -static \
       -I "$dir" -T "$dir/link.ld" -o "$tmp/$name.elf" "$src"; then
     echo "FAIL: $name does not assemble"; status=1; continue
   fi
-  timeout 10 "$qemu" -machine virt -cpu "${cpu:-rv64}" -bios none \
+  timeout 30 "$qemu" -machine virt -smp "${smp:-1}" -cpu "${cpu:-rv64}" -bios none \
     -kernel "$tmp/$name.elf" -display none -monitor none -serial none \
     >"$tmp/$name.log" 2>&1
   rc=$?

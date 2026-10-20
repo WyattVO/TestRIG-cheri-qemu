@@ -1,10 +1,11 @@
 #>QCVENGINE_TEST_V2.0
 # A store-conditional is a store: its authority (DDC here, the capability in
-# capability mode) needs Store permission. QEMU checks SC addresses with the
+# capability mode) needs Store permission. QEMU checked SC addresses with the
 # load check (get_capmode_dependent_load_addr in trans_rva.c.inc), so with a
-# DDC that has Load but not Store permission a reserved sc.w/sc.d succeeds and
-# writes memory. Sail raises a CHERI PermitStore fault (mcause 0x1c, mtval
-# 0x433 = DDC, cause 0x13). Open bug (same code in CHERI-QEMU 7.1).
+# DDC that has Load but not Store permission a reserved sc.w/sc.d succeeded
+# and wrote memory. Sail raises a CHERI PermitStore fault (mcause 0x1c, mtval
+# 0x433 = DDC, cause 0x13). Same code in CHERI-QEMU 7.1. The explicit
+# sc.*.ddc/.cap forms (not in Sail) are checked by qemu-only/sc-store-permission.S.
 .4byte 0x00100093 # addi x1, x0, 1
 .4byte 0x01f09093 # slli x1, x1, 31
 .4byte 0x10008093 # addi x1, x1, 0x100          (x1 = 0x80000100)

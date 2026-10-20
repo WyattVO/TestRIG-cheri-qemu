@@ -17,8 +17,8 @@ runs five stages and fails if any of them fails:
 | Stage | What it checks |
 |---|---|
 | 1. CHERI extension policy | QEMU refuses extensions that bypass capability checks (vector, hypervisor, pointer masking, Zicfiss/Zicfilp, big-endian, ...) and still starts the normal CPUs; every extension it offers is listed as reviewed in `regressions/cheri-extensions.txt`, and no CPU model crashes it |
-| 2. Saved regression traces | All 28 traces in `regressions/cheri-qemu-10.2/` (bugs that were found and fixed) and `regressions/cheri-guards/` replay without a difference from Sail. Traces of open bugs in `regressions/open-bugs/` must still fail |
-| 3. QEMU-only bare-metal tests | 16 tests in `regressions/qemu-only/` for CHERI behaviour the Sail model lacks (CW/CD/CRM/CRG page bits and TLB flushes, PMP, `amocas`/Zabha/Zcb/Zfh/Zicbo* and T-Head instructions in integer and capability mode, PCC bounds in cached code, UXL, endianness) |
+| 2. Saved regression traces | All 30 traces in `regressions/cheri-qemu-10.2/` (bugs that were found and fixed) and `regressions/cheri-guards/` replay without a difference from Sail. Traces of open bugs in `regressions/open-bugs/` must still fail |
+| 3. QEMU-only bare-metal tests | 25 tests in `regressions/qemu-only/` for CHERI behaviour the Sail model lacks (CW/CD/CRM/CRG page bits and TLB flushes, PMP, `amocas`/Zabha/Zcb/Zfh/Zicbo* and T-Head instructions in integer and capability mode, PCC bounds in cached code, interrupts in capability mode, two-hart tag consistency, UXL, endianness) |
 | 4. Random tests | Every QuickCheckVEngine template, comparing QEMU with Sail (36 templates; 7 that need hardware counters are skipped) |
 | 5. CheriBSD (optional) | Boots CheriBSD and runs `cheribsdtest-purecap` and `cheribsdtest-hybrid`; any `FAIL` fails the gate |
 
@@ -26,6 +26,8 @@ Last full run on `cheri-10.2` (2026-10-15, 300 tests per template, about 31
 minutes): every stage passed. `cheribsdtest-purecap` passed 305 with 10
 expected failures, and `cheribsdtest-hybrid` passed 149 with 52.
 
+[TESTBENCH.md](TESTBENCH.md) explains the CHERI test bench (stage 3): what each
+test checks, what bad behaviour it catches and how it was proven to fail.
 [regressions/README.md](regressions/README.md) lists every trace and the bug it
 caught. It also explains each exclusion, where the Sail model and QEMU
 legitimately differ, and how the gate was itself checked by reverting fixes.

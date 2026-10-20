@@ -45,7 +45,12 @@
 /* All permissions except Store, StoreCap and StoreLocalCap. */
 #define PERMS_NO_STORE  (~0x68)
 
-    /* Exit QEMU: pass, or fail with the given check number. */
+    /*
+     * Exit QEMU: pass, or fail with the given check number. fail first sets
+     * s10 = -1 (no trap expected): with a restricted DDC its own store to
+     * the test device can fault exactly like the access under test, and
+     * must not be taken for that expected fault.
+     */
     .macro pass
     li t0, TEST_DEVICE
     li t1, 0x5555
@@ -53,6 +58,7 @@
 1:  j 1b
     .endm
     .macro fail n
+    li s10, -1
     li t0, TEST_DEVICE
     li t1, (\n << 16) | 0x3333
     sw t1, 0(t0)

@@ -36,6 +36,7 @@
 #   CROSS_CC  RISC-V cross compiler for the QEMU-only tests
 #   CHERIBSD_OUTPUT  cheribuild output directory with a riscv64-purecap
 #             CheriBSD disk image (default: unset, stage 5 skipped)
+#   CHERIBSD_SMP  number of harts CheriBSD boots with (default: 1)
 set -u
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -145,7 +146,7 @@ run -n "$ntests" ${exclude:+--test-exclude-regex "$exclude"} || status=1
 if [ -n "${CHERIBSD_OUTPUT:-}" ]; then
   echo "=== CheriBSD tests"
   python3 "$here/cheribsd-tests.py" "$qemu" "$CHERIBSD_OUTPUT" \
-    --log "${CHERIBSD_LOG:-cheribsd-tests.log}" || status=1
+    --smp "${CHERIBSD_SMP:-1}" --log "${CHERIBSD_LOG:-cheribsd-tests.log}" || status=1
 fi
 
 if [ $status -eq 0 ]; then

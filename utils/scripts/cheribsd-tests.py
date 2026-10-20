@@ -74,6 +74,9 @@ def main():
     p.add_argument("output", help="cheribuild output directory")
     p.add_argument("--log", default="cheribsd-tests.log",
                    help="console log (default: %(default)s)")
+    p.add_argument("--smp", type=int, default=1,
+                   help="number of harts (default: %(default)s; QEMU runs them "
+                   "round-robin, its default for CHERI)")
     p.add_argument("--suite", action="append",
                    help="cheribsdtest binary to run (default: purecap and hybrid)")
     args = p.parse_args()
@@ -89,7 +92,8 @@ def main():
         if not os.path.exists(path):
             sys.exit("error: %s not found: %s" % (name, path))
 
-    argv = [args.qemu, "-M", "virt", "-m", "2048", "-nographic",
+    argv = [args.qemu, "-M", "virt", "-m", "2048", "-smp", str(args.smp),
+            "-nographic",
             "-bios", files["bios"], "-kernel", files["kernel"],
             "-drive", "if=none,file=%s,id=drv,format=raw,snapshot=on" % files["disk"],
             "-device", "virtio-blk-device,drive=drv",
