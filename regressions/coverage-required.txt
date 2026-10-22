@@ -1,0 +1,114 @@
+# CHERI instructions the random tests (gate stage 4) must exercise, checked by
+# utils/scripts/coverage-check.py against QuickCheckVEngine's stats file.
+#   <mnemonic> <min completed> [<min trapped>]
+#   gap <mnemonic> <reason>
+# The minimums hold at the default 100 tests per template. Memory accesses
+# need both a completed and a faulting run: before the capexplicit template,
+# all 26 explicit-authority loads/stores and the 10 explicit LRs had never
+# completed once, and nobody noticed (2026-10-22).
+
+# Inspection
+cgetperm 1
+cgettype 1
+cgetbase 1
+cgetlen 1
+cgettag 1
+cgetsealed 1
+cgetoffset 1
+cgetflags 1
+cgetaddr 1
+cgethigh 1
+
+# Manipulation, sealing, special registers
+candperm 1
+cbuildcap 1
+ccleartag 1
+ccopytype 1
+ccseal 1
+cfromptr 1
+cincoffset 1
+cincoffsetimmediate 1
+cmove 1
+crepresentablealignmentmask 1
+croundrepresentablelength 1
+cseal 1
+csealentry 1
+csetaddr 1
+csetbounds 1
+csetboundsexact 1
+csetboundsimmediate 1
+csetflags 1
+csethigh 1
+csetoffset 1
+csub 1
+ctestsubset 1
+ctoptr 1
+cunseal 1
+cspecialrw 1 1
+cclear 1
+cloadtags 1 1
+
+# Control flow
+jalr_cap 1 1
+cinvoke 1 1
+
+# Capability-mode-dependent loads/stores of capabilities
+lq 1 1
+sq 1 1
+lr.q 1 1
+sc.q 1 1
+
+# Explicit-authority loads and stores (capexplicit)
+lb.ddc 1
+lh.ddc 1
+lw.ddc 1
+ld.ddc 1
+lbu.ddc 1
+lhu.ddc 1
+lwu.ddc 1
+lq.ddc 1 1
+lb.cap 1 1
+lh.cap 1 1
+lw.cap 1 1
+ld.cap 1 1
+lbu.cap 1 1
+lhu.cap 1 1
+lwu.cap 1 1
+lq.cap 1 1
+sb.ddc 1
+sh.ddc 1
+sw.ddc 1
+sd.ddc 1
+sq.ddc 1 1
+sb.cap 1 1
+sh.cap 1 1
+sw.cap 1 1
+sd.cap 1 1
+sq.cap 1 1
+
+# Explicit-authority LR/SC (capexplicit)
+lr.b.ddc 1
+lr.h.ddc 1
+lr.w.ddc 1
+lr.d.ddc 1
+lr.q.ddc 1 1
+lr.b.cap 1 1
+lr.h.cap 1 1
+lr.w.cap 1 1
+lr.d.cap 1 1
+sc.b.ddc 1
+sc.h.ddc 1
+sc.w.ddc 1
+sc.d.ddc 1
+sc.q.ddc 1 1
+sc.b.cap 1 1
+sc.h.cap 1 1
+sc.w.cap 1 1
+sc.d.cap 1 1
+sc.q.cap 1 1
+
+gap lr.q.cap the Sail model faults on every one (LoadResCapCap adds the address to itself); capexplicit leaves it out
+gap ldu.ddc RV128 only; an illegal instruction on RV64 is correct
+gap ldu.cap RV128 only; an illegal instruction on RV64 is correct
+gap fpclear not implemented in QEMU (regressions/open-bugs/01-fpclear-not-implemented.S); its template is excluded
+gap cgettop QuickCheckVEngine cannot generate or name it (counted as Unknown); covered by trace 27 only

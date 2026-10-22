@@ -1,0 +1,9 @@
+# Known differences between upstream QEMU and the CHERI port in
+# upstream-diff.py: "<suite>/<test> <reason>" (or "<suite>/* <reason>").
+# Each must say which side is wrong and point at the evidence.
+
+# Upstream bug (10.2 and 11.x): an amocas with rd = x0 writes the shared
+# constant-zero TCG temporary, so the test's signature store of x0 writes the
+# swap value. The port is right; regressions/qemu-only/amocas-rd-x0.S.
+Zacas/amocas.w-01 upstream bug: amocas with rd = x0 corrupts x0 (amocas-rd-x0.S)
+Zacas/amocas.d_64-01 upstream bug: amocas with rd = x0 corrupts x0 (amocas-rd-x0.S)

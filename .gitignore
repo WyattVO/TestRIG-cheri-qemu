@@ -1,3 +1,5 @@
 *.S
 # Saved regression traces are test inputs, not generator output.
 !regressions/**/*.S
+random-failures/
+cheribsd-tests.log

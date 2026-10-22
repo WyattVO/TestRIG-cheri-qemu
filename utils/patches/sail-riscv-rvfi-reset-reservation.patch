@@ -1,0 +1,13 @@
+diff --git a/sail-riscv/c_emulator/riscv_sim.c b/sail-riscv/c_emulator/riscv_sim.c
+index b04ebd10..6f2d47e7 100644
+--- a/sail-riscv/c_emulator/riscv_sim.c
++++ b/sail-riscv/c_emulator/riscv_sim.c
+@@ -628,6 +628,8 @@ void reinit_sail(uint64_t elf_entry)
+ {
+   model_fini();
+   model_init();
++  /* The reservation lives in riscv_platform.c, outside the model state. */
++  cancel_reservation(UNIT);
+   init_sail(elf_entry);
+ }
+ 
