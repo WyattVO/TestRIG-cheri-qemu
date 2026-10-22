@@ -68,8 +68,28 @@ Traces of known QEMU bugs that are not fixed yet. The gate replays each one
 and expects it to fail (`xfail`); it reports `XPASS` once one passes, and the
 trace should then move to `cheri-qemu-10.2/`.
 
-None at the moment. The first one, a store-conditional without Store
-permission, was fixed and is now `cheri-qemu-10.2/29-sc-needs-store-permission.S`.
+| Trace | Open bug |
+|---|---|
+| `01-fpclear-not-implemented.S` | `fpclear` is commented out of QEMU's v9 decoder, so it raises an illegal instruction where Sail clears the FP registers (CHERI-Alliance QEMU too). The `fpclear` template only saw it once it enabled the FPU (it never set `mstatus.FS`, so every `fpclear` trapped on both sides); the gate excludes that template until this is fixed |
+
+The first open bug, a store-conditional without Store permission, was fixed
+and is now `cheri-qemu-10.2/29-sc-needs-store-permission.S`.
+
+## Coverage of the random tests
+
+`coverage-required.txt` lists the CHERI instructions gate stage 4 must
+actually run, completed and (for memory accesses) faulting, checked by
+`utils/scripts/coverage-check.py` against QuickCheckVEngine's statistics. It
+was added after a 3.6-million-instruction run (2026-10-22, 100 tests per
+template) showed that none of the 26 explicit-authority loads/stores
+(`lb.ddc` ... `sd.cap`) and 10 explicit LRs had ever completed: the
+templates gave them random registers, so they always faulted, and both sides
+agreed. The new `capexplicit` QuickCheckVEngine template builds valid
+addresses and DDC-derived capabilities for them; it found the `fpclear` open
+bug (indirectly), a Sail bug (`lr.c.cap` adds the address to itself, still
+in upstream sail-cheri-riscv) and a Sail test-harness bug (the reservation
+survived RVFI-DII resets; patched in `utils/patches/`). The `gap` lines name
+what is still not covered and why.
 
 ## Reviewed CPU extensions
 
@@ -94,6 +114,7 @@ cannot compare them. CHERI instructions are written with `.insn` (see
 |---|---|
 | `amocas-q-clears-tag.S` | A successful `amocas.q` clears the overwritten capability's tag; a failed one changes nothing |
 | `amocas-wdb-clears-tag.S` | Same for `amocas.d`, `amocas.w` (Zacas) and `amocas.b` (Zabha) |
+| `amocas-rd-x0.S` | An `amocas.w/.d/.b/.h/.q` with rd = x0 leaves x0 zero for the rest of the translation block. Upstream QEMU 10.2 and 11.x gave the shared constant-zero temporary to the cmpxchg as its result, so a later `sd x0` stored the old memory value (found by the upstream diff, gate stage 6). Fails on upstream, passes on the port |
 | `pte-cw-capability-store.S` | Sv39 in S-mode: a tagged capability store to a page with CW clear raises cause 27, an untagged one succeeds, CW set keeps the tag. Sail never enforces CW |
 | `smp-tag-consistency.S` | Two harts (`# QEMU_SMP: 2`): while hart 1 alternately stores a capability and plain data into a slot, every tagged capability hart 0 loads from it is hart 1's capability (never a tag on plain data); a plain store from one hart clears the tag of a capability another hart stored |
 | `tag-clear-store-widths.S` | Every store width and kind (sb/sh/sw/sd, fsw/fsd, c.sw/c.sd) clears the tag of exactly the capability it writes into; misaligned stores crossing two capabilities clear both; loads and stores outside a capability leave it tagged |

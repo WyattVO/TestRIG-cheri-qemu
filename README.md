@@ -12,15 +12,19 @@ this section.
 ## The gate
 
 `utils/scripts/testrig-gate.sh <qemu-system-riscv64xcheri> [tests-per-template]`
-runs five stages and fails if any of them fails:
+runs up to seven stages and fails if any of them fails. Each stage has its
+own reference ("oracle"); [TESTBENCH.md](TESTBENCH.md#oracles-what-each-stage-compares-against)
+says what each one can and cannot judge.
 
 | Stage | What it checks |
 |---|---|
 | 1. CHERI extension policy | QEMU refuses extensions that bypass capability checks (vector, hypervisor, pointer masking, Zicfiss/Zicfilp, big-endian, ...) and still starts the normal CPUs; every extension it offers is listed as reviewed in `regressions/cheri-extensions.txt`, and no CPU model crashes it |
 | 2. Saved regression traces | All 30 traces in `regressions/cheri-qemu-10.2/` (bugs that were found and fixed) and `regressions/cheri-guards/` replay without a difference from Sail. Traces of open bugs in `regressions/open-bugs/` must still fail |
-| 3. QEMU-only bare-metal tests | 28 tests in `regressions/qemu-only/` for CHERI behaviour the Sail model lacks (CW/CD/CRM/CRG page bits and TLB flushes, PMP, `amocas`/Zabha/Zcb/Zfh/Zicbo* and T-Head instructions in integer and capability mode, PCC bounds in cached code, interrupts in capability mode, two-hart tag consistency, UXL, endianness) |
-| 4. Random tests | Every QuickCheckVEngine template, comparing QEMU with Sail (36 templates; 7 that need hardware counters are skipped) |
-| 5. CheriBSD (optional) | Boots CheriBSD and runs `cheribsdtest-purecap` and `cheribsdtest-hybrid`; any `FAIL` fails the gate |
+| 3. QEMU-only bare-metal tests | 29 tests in `regressions/qemu-only/` for CHERI behaviour the Sail model lacks (CW/CD/CRM/CRG page bits and TLB flushes, PMP, `amocas`/Zabha/Zcb/Zfh/Zicbo* and T-Head instructions in integer and capability mode, PCC bounds in cached code, interrupts in capability mode, two-hart tag consistency, UXL, endianness) |
+| 4. Random tests | Every QuickCheckVEngine template, comparing QEMU with Sail (29 of 37 run; 7 need hardware counters, `fpclear` is an open bug). Seeded (`SEED=`), failures saved to `random-failures/` as traces, then `coverage-check.py` fails if a CHERI instruction in `regressions/coverage-required.txt` never completed (or never faulted) |
+| 4b. Three-way vote (optional, `ALLIANCE_QEMU`) | Random tests of [CHERI-Alliance QEMU](https://github.com/CHERI-Alliance/qemu) `main` against this QEMU; each disagreement is replayed on Sail. Fails if this QEMU is the odd one out, or if both QEMUs differ from Sail; reports Alliance-only differences |
+| 5. CheriBSD (optional, `CHERIBSD_OUTPUT`) | Boots CheriBSD and runs `cheribsdtest-purecap` and `cheribsdtest-hybrid`; any `FAIL` fails the gate |
+| 6. Upstream QEMU (optional, `UPSTREAM_BUILD`, `ARCH_TEST`) | Unmodified upstream QEMU v10.2.0 is the reference for non-CHERI behaviour: upstream's own check-tcg and qtests run on this QEMU, and every RV64 riscv-arch-test program gives the same signature and instruction trace on both (`upstream-diff.py`, known differences with reasons in `utils/upstream-diff/expected.txt`) |
 
 Last full run on `cheri-10.2` (2026-10-15, 300 tests per template, about 31
 minutes): every stage passed. `cheribsdtest-purecap` passed 305 with 10
@@ -62,7 +66,10 @@ legitimately differ, and how the gate was itself checked by reverting fixes.
   Details are in `regressions/README.md`.
 
 The Sail model (`riscv-implementations/sail-cheri-riscv`, CTSRD `74a9da1`) is
-unmodified.
+unmodified. Its C emulator needs one test-harness fix,
+`utils/patches/sail-riscv-rvfi-reset-reservation.patch`: it kept the LR
+reservation across RVFI-DII test resets, so whether an SC succeeded could
+depend on the previous test. Apply it before building (step 3).
 
 ## Running it on your machine
 
@@ -95,6 +102,7 @@ cd vengines/QuickCheckVEngine && cabal update && cabal build -w ghc-9.6.7 && cd 
 sudo apt install opam z3 libgmp-dev zlib1g-dev pkg-config   # or a z3 release binary in ~/.local/bin
 opam init && opam switch create sail ocaml-base-compiler.5.2.1 && opam install sail.0.18
 eval $(opam env --switch=sail)
+git -C riscv-implementations/sail-cheri-riscv apply ../../utils/patches/sail-riscv-rvfi-reset-reservation.patch
 make -C riscv-implementations/sail-cheri-riscv C_WARNINGS=-std=gnu17 c_emulator/cheri_riscv_rvfi_RV64
 ```
 
@@ -113,6 +121,25 @@ mkdir cheri-qemu-port/build && cd cheri-qemu-port/build
 
 - For stage 3, install a RISC-V cross compiler:
   `sudo apt install gcc-riscv64-linux-gnu`, or point `CROSS_CC` at one.
+- For stage 4b, build CHERI-Alliance QEMU `main` with RVFI-DII (QEMU 7.2
+  needs an external meson, e.g. from a Python venv):
+  ```sh
+  git clone https://github.com/CHERI-Alliance/qemu.git alliance-qemu
+  mkdir alliance-qemu/build && cd alliance-qemu/build
+  ../configure --meson=$(which meson) --target-list=riscv64xcheri-softmmu --enable-rvfi-dii \
+      --disable-werror --disable-docs --disable-slirp --disable-rdma && ninja
+  ```
+- For stage 6, build upstream QEMU v10.2.0 with plugins and its RISC-V
+  check-tcg tests, and check out riscv-arch-test 3.9.1:
+  ```sh
+  git clone -b v10.2.0 https://github.com/qemu/qemu.git upstream-qemu-10.2
+  mkdir upstream-qemu-10.2/build && cd upstream-qemu-10.2/build
+  ../configure --target-list=riscv64-softmmu --enable-plugins \
+      --cross-prefix-riscv64=riscv64-linux-gnu- --disable-docs
+  ninja && ninja contrib-plugins && make check-tcg
+  git clone --depth 1 -b 3.9.1 https://github.com/riscv-non-isa/riscv-arch-test.git
+  ```
+  The QEMU under test must support TCG plugins (the default).
 - For stage 5, build CheriBSD with
   [cheribuild](https://github.com/CTSRD-CHERI/cheribuild):
   `./cheribuild.py -d disk-image-riscv64-purecap bbl-baremetal-riscv64-purecap`.
@@ -124,12 +151,16 @@ mkdir cheri-qemu-port/build && cd cheri-qemu-port/build
 QEMU=/path/to/cheri-qemu-port/build/qemu-system-riscv64xcheri
 utils/scripts/testrig-gate.sh $QEMU 300                                    # stages 1-4
 CHERIBSD_OUTPUT=~/cheri/output utils/scripts/testrig-gate.sh $QEMU 300     # plus CheriBSD
+ALLIANCE_QEMU=/path/to/alliance-qemu/build/qemu-system-riscv64xcheri \
+UPSTREAM_BUILD=/path/to/upstream-qemu-10.2/build ARCH_TEST=/path/to/riscv-arch-test \
+CHERIBSD_OUTPUT=~/cheri/output utils/scripts/testrig-gate.sh $QEMU 100     # every stage
 ```
 
 It ends with `TESTRIG GATE: PASS` or `FAIL`. Don't edit `testrig-gate.sh`
 while it runs: bash reads the script as it goes. Environment variables
-`EXCLUDE`, `ARCH`, `CSR_EXCLUDE`, `QEMU_CPU_EXTRA`, `QCVENGINE` and `CROSS_CC`
-are described at the top of the script. `CHERIBSD_LOG` sets where the
+`EXCLUDE`, `SEED`, `SAVE_DIR`, `ARCH`, `CSR_EXCLUDE`, `QEMU_CPU_EXTRA`,
+`QCVENGINE`, `CROSS_CC`, `VOTE_TESTS` and the optional stages' variables are
+described at the top of the script. `CHERIBSD_LOG` sets where the
 CheriBSD console log is written (default `cheribsd-tests.log`).
 
 ### Smaller runs
@@ -140,6 +171,7 @@ R="python3 utils/scripts/runTestRIG.py -a sail -b qemu --path-to-qemu $QEMU --pa
    -r rv64imsafdcZicsr_Zifencei_Xcheri --support-misaligned --no-save -s 2 \
    --qemu-cpu-extra zba=true,zbb=true,zbc=true,zbs=true"
 $R -n 50 --test-include-regex '^caparith$'                    # one template
+$R -n 50 --test-include-regex '^caparith$' --seed 12345       # the same tests again
 $R -t regressions/cheri-qemu-10.2/27-cgettop.S -v 2           # one trace, every instruction shown
 $R -d regressions/cheri-qemu-10.2/ --continue-on-fail         # all saved traces
 python3 utils/scripts/cheribsd-tests.py $QEMU ~/cheri/output  # stage 5 only
@@ -157,6 +189,13 @@ python3 utils/scripts/cheribsd-tests.py $QEMU ~/cheri/output  # stage 5 only
   crashed.
 - `passed N tests; 1 discarded` is fine. A store-conditional may legally
   succeed on one side and fail on the other.
+- A random failure prints the run's seed; `SEED=<n>` reruns the same tests,
+  and `--seed <n> -I '^<template>$'` reruns one template's tests (template
+  seeds depend only on the seed and the template, not on the regexes).
+- Stage 4b: `port-differs` is a bug in this QEMU; `both-differ` needs the
+  spec (so far: a missing QEMU instruction, a Sail bug, an allowed
+  difference); `alliance-differs` is for the upstream bug report. The
+  shrunk traces are in `random-failures/vote-<seed>/traces/`.
 
 ---
 
