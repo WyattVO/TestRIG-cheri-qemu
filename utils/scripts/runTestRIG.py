@@ -157,10 +157,21 @@ parser.add_argument('--path-to-spike', metavar='PATH', type=str,
   default=None, help="The PATH to the spike executable")
 parser.add_argument('--path-to-qemu', metavar='PATH', type=str,
   default=None, help="The PATH to the qemu executable")
+parser.add_argument('--path-to-qemu-A', metavar='PATH', type=str,
+  default=None, help="The PATH to the qemu executable used as implementation\
+  A (defaults to --path-to-qemu), to compare two QEMU builds")
+parser.add_argument('--path-to-qemu-B', metavar='PATH', type=str,
+  default=None, help="The PATH to the qemu executable used as implementation\
+  B (defaults to --path-to-qemu)")
 parser.add_argument('--qemu-cpu-extra', metavar='PROPS', type=str,
   default=None, help="Extra comma-separated QEMU -cpu properties, e.g. to\
   enable extensions that the other implementation always has but that the\
   architecture string cannot express (zba=true,zbb=true)")
+parser.add_argument('--qemu-cpu-extra-A', metavar='PROPS', type=str,
+  default=None, help="Extra -cpu properties for implementation A's QEMU only\
+  (after --qemu-cpu-extra)")
+parser.add_argument('--qemu-cpu-extra-B', metavar='PROPS', type=str,
+  default=None, help="Extra -cpu properties for implementation B's QEMU only")
 parser.add_argument('--path-to-piccolo', metavar='PATH', type=str,
   default=op.join(implementations_path, "Piccolo/builds/RV32IMUxCHERI_RVFI_DII_Piccolo_bluesim/exe_HW_sim"),
   help="The PATH to the Piccolo executable")
@@ -228,6 +239,11 @@ parser.add_argument('--no-save', action='count', default=0,
   help="Don't ask to save files")
 parser.add_argument('--continue-on-fail', action='count', default=0,
   help="Continue when encountering a failure")
+parser.add_argument('--seed', metavar='N', type=auto_int, default=None,
+  help="Seed for QuickCheckVEngine's random tests (default: from the clock)")
+parser.add_argument('--stats-file', metavar='PATH', type=str, default=None,
+  help="Where QuickCheckVEngine writes its instruction coverage table\
+  (default: last_stats.txt)")
 parser.add_argument('--test-len', metavar='LEN', default=None, type=auto_int,
   help="Tell vengine to generate tests up to LEN instructions long")
 parser.add_argument('--supported-features', metavar='FEAT', type=str,
@@ -477,7 +493,7 @@ def input_y_n(prompt):
 # spawn rvfi_dii server #
 #########################
 
-def spawn_rvfi_dii_server(name, port, log, isa_def):
+def spawn_rvfi_dii_server(name, port, log, isa_def, side):
   # few common variables
   use_log = open(os.devnull, "w")
   if log:
@@ -521,10 +537,13 @@ def spawn_rvfi_dii_server(name, port, log, isa_def):
         args.path_to_qemu += "/qemu-system-riscv32xcheri"
       else:
         args.path_to_qemu += "/qemu-system-riscv64xcheri"
-    qemu_cpu = isa_def.get_qemu_cpu(args.path_to_qemu)
-    if args.qemu_cpu_extra:
-      qemu_cpu += "," + args.qemu_cpu_extra
-    cmd = [args.path_to_qemu, "--rvfi-dii-port", str(port),
+    qemu_path = (args.path_to_qemu_A if side == 'A' else args.path_to_qemu_B) or args.path_to_qemu
+    qemu_cpu = isa_def.get_qemu_cpu(qemu_path)
+    for extra in (args.qemu_cpu_extra,
+                  args.qemu_cpu_extra_A if side == 'A' else args.qemu_cpu_extra_B):
+      if extra:
+        qemu_cpu += "," + extra
+    cmd = [qemu_path, "--rvfi-dii-port", str(port),
            "-cpu", qemu_cpu, "-bios", "none"]
     if not isa_def.support_misaligned:
       sys.exit("FATAL: --support-misaligned must be passed for QEMU since there is no way of turning it off")
@@ -643,6 +662,10 @@ def spawn_vengine(name, mport, iport, arch, log, more_args=[]):
       cmd += ['--no-save']
     if args.continue_on_fail:
       cmd += ['--continue-on-fail']
+    if args.seed is not None:
+      cmd += ['--seed', str(args.seed)]
+    if args.stats_file:
+      cmd += ['--statsFile', args.stats_file]
     if args.test_len:
       cmd += ['-L', str(args.test_len)]
     if args.test_include_regex:
@@ -812,9 +835,9 @@ def main():
       bsocks[job].close()
 
       a.append(spawn_rvfi_dii_server(args.implementation_A, aports[job],
-                                     logs[job].impl_a_log, isa_def))
+                                     logs[job].impl_a_log, isa_def, 'A'))
       b.append(spawn_rvfi_dii_server(args.implementation_B, bports[job],
-                                     logs[job].impl_b_log, isa_def))
+                                     logs[job].impl_b_log, isa_def, 'B'))
 
     time.sleep(args.spawn_delay)  # small delay to give time to the spawned servers to be ready to listen
 
