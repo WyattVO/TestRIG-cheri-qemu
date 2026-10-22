@@ -51,6 +51,7 @@ program authority it could not already get; several remove authority.
 | `28-sc-b-last-byte.S` | `sc.b` to `0xffffffffffffffff` without a reservation matched QEMU's "no reservation" value (`load_res == -1`) and took a load access fault instead of failing (also in CHERI-QEMU 7.1) |
 | `29-sc-needs-store-permission.S` | `sc.w`/`sc.d` (and the explicit `sc.*.ddc`/`sc.*.cap` forms) checked their address with the *load* check, so a reserved SC through a Load-only DDC or capability wrote memory; Sail raises PermitStore (also in CHERI-QEMU 7.1; found by the open-bugs trace 2026-10-19) |
 | `30-cap-atomics-store-permissions.S` | `sc.c`/`amoswap.c` required StoreCap even for an untagged value and named the stored register instead of the authority for StoreLocalCap violations (Sail checks both only for tagged values and names the authority; found by the test bench 2026-10-20) |
+| `31-fpclear.S` | `fpclear` was commented out of QEMU's v9 decoder, so it raised an illegal instruction where Sail clears the FP registers (CHERI-Alliance QEMU still does; implemented 2026-10-22). Only the trap is compared; `qemu-only/fpclear-registers.S` checks the values |
 
 ## cheri-guards
 
@@ -68,12 +69,9 @@ Traces of known QEMU bugs that are not fixed yet. The gate replays each one
 and expects it to fail (`xfail`); it reports `XPASS` once one passes, and the
 trace should then move to `cheri-qemu-10.2/`.
 
-| Trace | Open bug |
-|---|---|
-| `01-fpclear-not-implemented.S` | `fpclear` is commented out of QEMU's v9 decoder, so it raises an illegal instruction where Sail clears the FP registers (CHERI-Alliance QEMU too). The `fpclear` template only saw it once it enabled the FPU (it never set `mstatus.FS`, so every `fpclear` trapped on both sides); the gate excludes that template until this is fixed |
-
-The first open bug, a store-conditional without Store permission, was fixed
-and is now `cheri-qemu-10.2/29-sc-needs-store-permission.S`.
+None at the moment. Fixed open bugs: a store-conditional without Store
+permission (now `cheri-qemu-10.2/29-sc-needs-store-permission.S`) and
+`fpclear` not being implemented (now `cheri-qemu-10.2/31-fpclear.S`).
 
 ## Coverage of the random tests
 
@@ -114,6 +112,7 @@ cannot compare them. CHERI instructions are written with `.insn` (see
 |---|---|
 | `amocas-q-clears-tag.S` | A successful `amocas.q` clears the overwritten capability's tag; a failed one changes nothing |
 | `amocas-wdb-clears-tag.S` | Same for `amocas.d`, `amocas.w` (Zacas) and `amocas.b` (Zabha) |
+| `fpclear-registers.S` | `fpclear` traps with FS = Off, zeroes exactly the selected registers to an FLEN-wide 0 (not NaN-boxed), sets FS to Dirty, and leaves FS alone for an empty mask |
 | `amocas-rd-x0.S` | An `amocas.w/.d/.b/.h/.q` with rd = x0 leaves x0 zero for the rest of the translation block. Upstream QEMU 10.2 and 11.x gave the shared constant-zero temporary to the cmpxchg as its result, so a later `sd x0` stored the old memory value (found by the upstream diff, gate stage 6). Fails on upstream, passes on the port |
 | `pte-cw-capability-store.S` | Sv39 in S-mode: a tagged capability store to a page with CW clear raises cause 27, an untagged one succeeds, CW set keeps the tag. Sail never enforces CW |
 | `smp-tag-consistency.S` | Two harts (`# QEMU_SMP: 2`): while hart 1 alternately stores a capability and plain data into a slot, every tagged capability hart 0 loads from it is hart 1's capability (never a tag on plain data); a plain store from one hart clears the tag of a capability another hart stored |
@@ -214,7 +213,11 @@ than a QEMU bug:
 - `csr` (`CSR_EXCLUDE`) skips those plus `mstatus`/`sstatus` (Sail has the vector
   VS field), `mip`/`mie`/`mideleg`/`medeleg` (Sail's legalizers are marked FIXME
   and allow bits QEMU correctly keeps zero), `sccsr` (Sail lacks the
-  load-capability generation bits) and unnamed CSRs.
+  load-capability generation bits) and unnamed CSRs. The filter drops every
+  generated access to those CSRs, which used to include the FP templates'
+  `mstatus.FS` setup: in the gate the FPU stayed off and every FP instruction
+  trapped on both sides. `fp_prologue` now writes `mstatus` directly (rd = x0,
+  so no value is compared).
 - `pte` only generates PTEs Sail judges correctly: CW = CD = 1, CRM = CRG = 0
   (Sail never enforces CW and has no CD/CRM/CRG), and no A/D/U in non-leaf PTEs
   (reserved since privileged spec 1.13; Sail follows the older spec). The PTE

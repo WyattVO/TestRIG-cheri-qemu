@@ -46,6 +46,7 @@ ctoptr 1
 cunseal 1
 cspecialrw 1 1
 cclear 1
+fpclear 1
 cloadtags 1 1
 
 # Control flow
@@ -110,5 +111,4 @@ sc.q.cap 1 1
 gap lr.q.cap the Sail model faults on every one (LoadResCapCap adds the address to itself); capexplicit leaves it out
 gap ldu.ddc RV128 only; an illegal instruction on RV64 is correct
 gap ldu.cap RV128 only; an illegal instruction on RV64 is correct
-gap fpclear not implemented in QEMU (regressions/open-bugs/01-fpclear-not-implemented.S); its template is excluded
 gap cgettop QuickCheckVEngine cannot generate or name it (counted as Unknown); covered by trace 27 only

@@ -1,11 +1,10 @@
-# fpclear (CHERI v9, 0x7f/0x10 in the Xcheri quadrant) is not implemented:
-# it is commented out of target/riscv/insn32-cheri-v9.decode, so QEMU raises
-# an illegal instruction where the Sail model clears the selected FP
-# registers. CHERI-Alliance QEMU (7.2) has the same gap (three-way vote:
-# both QEMUs differ from Sail). cclear had the same history (trace 11).
-# The fpclear template only noticed once it enabled the FPU (mstatus.FS);
-# the gate skips that template until this is fixed (EXCLUDE default).
 #>QCVENGINE_TEST_V2.0
+# fpclear q, m (CHERI v9) zeroes FP register 8*q+i for each set bit i of m
+# when the FPU is enabled. QEMU had it commented out of its v9 decoder and
+# raised an illegal instruction (CHERI-Alliance QEMU still does); implemented
+# 2026-10-22. TestRIG cannot compare FP register values, so this only checks
+# that fpclear no longer traps; qemu-only/fpclear-registers.S checks the
+# values and the mstatus.FS rules.
 #>START_SHRINK_SCOPE
 #>START_NO_SHRINK
 .4byte 0x000020b7 # lui x1, 2
