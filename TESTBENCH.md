@@ -29,7 +29,7 @@ cover the base CHERI ISA; CheriBSD (stage 5) covers the whole system.
 | Area | Feature | Tests | Bad behaviour it catches |
 |---|---|---|---|
 | Tags | Ordinary stores clear tags | `tag-clear-store-widths` | a store width, FP or compressed store, or a misaligned split that leaves a tag on non-capability bytes |
-| Tags | Device / DMA writes clear tags | `dma-clears-tags` | a device-written buffer keeping a tag (forged capability) |
+| Tags | Device / DMA writes clear tags | `dma-clears-tags` (address_space_write), `virtio-dma-clears-tags` (map/unmap, as virtio disks and network) | a device-written buffer keeping a tag (forged capability) |
 | Tags | Atomics and CAS clear tags | `amocas-q-clears-tag`, `amocas-wdb-clears-tag`, `ext-mem-insns-*`, trace 17 | `amocas`, Zabha, SC overwriting a capability without clearing its tag |
 | Tags | Cache-block zero | `cbo-zero-cheri` | `cbo.zero` keeping tags |
 | Tags | Two harts | `smp-tag-consistency` | a torn capability (tag on another hart's plain data) |
@@ -45,6 +45,8 @@ cover the base CHERI ISA; CheriBSD (stage 5) covers the whole system.
 | MMU | PTE updates honour PMP | `pte-cd-update-pmp` (XFAIL on 10.2) | the walker setting CD through a read-only page table |
 | PMP | 16-byte capability accesses | `pmp-capability-access` | half of a capability access escaping PMP |
 | Config | Extension policy and review | gate stage 1, `cheri-extensions.txt` | an unreviewed or unsafe extension enabled on a CHERI CPU |
+| Config | Refused extensions are really off | `disabled-ext-inert` (on `-cpu max`) | a refused extension still decoded, or its CSR bits still writable |
+| Debug | Sdtrig triggers | `debug-trigger-cheri` | data triggers missing capability loads/stores; execute triggers in capability mode losing PCC |
 | Config | Fixed formats | `uxl-read-only`, `data-endianness-fixed` | RV32 or big-endian state changing the capability format |
 | 10.2 extensions | Functional results | `ext-functional` | a port breaking Zicond, Zfh, Zfa, Zcb, Zbkb, Zimop, Zawrs, Sstc, Zicbop, Zicntr |
 | System | Whole OS | stage 5: `cheribsdtest` purecap and hybrid, `CHERIBSD_SMP=N` for SMP | anything above, end to end |
@@ -55,7 +57,8 @@ A test that has only ever passed proves nothing. Each bench test was run
 against a QEMU where the behaviour it checks is broken, and failed:
 
 - real bugs found by the bench failed before the fix and passed after
-  (`sc-store-permission`, `cbo-inval-bounds`, trace 30);
+  (`sc-store-permission`, `cbo-inval-bounds`, trace 30, `debug-trigger-cheri`,
+  `disabled-ext-inert`);
 - deliberate mutations: `cbo.zero` without tag clearing, QEMU 11's
   unconditional PBMT check, the 8-bit TLB `prot` field;
 - a wrong expected value in a copy of the test (e.g. `ext-functional`,
@@ -85,6 +88,12 @@ against a QEMU where the behaviour it checks is broken, and failed:
 - MTTCG: CHERI tags are not thread-safe across host threads; use the default
   round-robin TCG for SMP (QEMU warns otherwise).
 - `riscv64cheristd` (CHERI 0.9.3 standard) has no bench or CheriBSD run.
-- Not yet covered: debug triggers on capability accesses, hypervisor (refused
-  on CHERI), vector (refused), IOMMU, virtio device paths other than through
-  CheriBSD.
+- Vector and hypervisor are refused on CHERI; `disabled-ext-inert` checks they
+  stay off. Testing them for real needs a CHERI-aware implementation first.
+- IOMMU (`riscv-iommu`): device DMA through an IOMMU ends in the same
+  physmem write paths the two DMA tests cover; an IOMMU-specific test needs a
+  bare-metal IOMMU driver (device directory, page tables) and is not written.
+- `riscv64cheristd` (CHERI 0.9.3 standard): the bench uses v9 encodings and
+  v9 semantics; a 0.9.3 bench would need its own `cheri-std.h` and a
+  CheriBSD built for it.
+- MTTCG: not a test gap but a design limit of CHERI tags (see SMP above).

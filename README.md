@@ -18,7 +18,7 @@ runs five stages and fails if any of them fails:
 |---|---|
 | 1. CHERI extension policy | QEMU refuses extensions that bypass capability checks (vector, hypervisor, pointer masking, Zicfiss/Zicfilp, big-endian, ...) and still starts the normal CPUs; every extension it offers is listed as reviewed in `regressions/cheri-extensions.txt`, and no CPU model crashes it |
 | 2. Saved regression traces | All 30 traces in `regressions/cheri-qemu-10.2/` (bugs that were found and fixed) and `regressions/cheri-guards/` replay without a difference from Sail. Traces of open bugs in `regressions/open-bugs/` must still fail |
-| 3. QEMU-only bare-metal tests | 25 tests in `regressions/qemu-only/` for CHERI behaviour the Sail model lacks (CW/CD/CRM/CRG page bits and TLB flushes, PMP, `amocas`/Zabha/Zcb/Zfh/Zicbo* and T-Head instructions in integer and capability mode, PCC bounds in cached code, interrupts in capability mode, two-hart tag consistency, UXL, endianness) |
+| 3. QEMU-only bare-metal tests | 28 tests in `regressions/qemu-only/` for CHERI behaviour the Sail model lacks (CW/CD/CRM/CRG page bits and TLB flushes, PMP, `amocas`/Zabha/Zcb/Zfh/Zicbo* and T-Head instructions in integer and capability mode, PCC bounds in cached code, interrupts in capability mode, two-hart tag consistency, UXL, endianness) |
 | 4. Random tests | Every QuickCheckVEngine template, comparing QEMU with Sail (36 templates; 7 that need hardware counters are skipped) |
 | 5. CheriBSD (optional) | Boots CheriBSD and runs `cheribsdtest-purecap` and `cheribsdtest-hybrid`; any `FAIL` fails the gate |
 

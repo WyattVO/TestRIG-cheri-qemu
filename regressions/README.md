@@ -108,17 +108,20 @@ cannot compare them. CHERI instructions are written with `.insn` (see
 | `cheri-fault-delegation.S` | A CHERI fault in a U-mode capability-mode program is delegated to S-mode through `medeleg` bit 28, with the right `scause`, `stval` (register and cause) and the full user PCC in SEPCC; `sret` returns to the program in capability mode |
 | `cbo-inval-bounds.S` | `cbo.clean`/`cbo.flush` need only one byte of the block in bounds, but `cbo.inval` needs all of it (riscv-cheri spec, `cbo_exceptions.adoc`): invalidating a partly covered block could re-expose older data and capabilities. QEMU 10.2 only rejected blocks entirely outside the bounds (fixed 2026-10-19) |
 | `cbo-zero-cheri.S` | `cbo.zero` (Zicboz) clears the tags of every capability in the 64-byte block, needs Store permission in its authority and the whole block in bounds |
+| `debug-trigger-cheri.S` | Sdtrig data triggers fire for capability loads and stores as for ordinary ones (capability stores missed them: the 10.2 port read the TLB slow flags with the unmapped CHERI access type; fixed 2026-10-20), and an execute trigger in capability mode saves a tagged capability-mode MEPCC and resumes there |
+| `disabled-ext-inert.S` | On `-cpu max`, every extension the CHERI policy refuses is really off: vector and hypervisor instructions and CSRs are illegal, `mstatus.VS`, the pointer-masking fields (`menvcfg.PMM`, `mseccfg.PMM`) and `menvcfg.LPE/SSE` stay 0, `mnret` is illegal. `mseccfg.PMM` was writable through the Smepmp path (upstream QEMU bug, harmless here because masking is gated on Smmpm; fixed 2026-10-20) |
 | `dma-clears-tags.S` | A device writing guest memory by DMA (fw_cfg) clears the tag of the capability it writes into, even partly, and leaves neighbouring capabilities tagged |
 | `ext-functional.S` | 10.2 extensions Sail lacks compute spec results in the CHERI build: Zicond, Zfh, Zfa, Zcb, Zbkb, Zimop/Zcmop, Zawrs/Zihintpause, Sstc (`stimecmp` drives `mip.STIP`), Zicbop (prefetches never fault, even outside DDC), Zicntr |
 | `ext-mem-insns-cheri.S` | Zcb (`c.lbu`/`c.lhu`/`c.sb`/`c.sh`), Zfh (`flh`/`fsh`), Zacas, Zabha and Zicbom instructions clear the tags they overwrite and obey DDC bounds and Store permission |
 | `ext-mem-insns-capmode.S` | The same instructions in capability mode (purecap CheriBSD's mode): the address capability, not DDC, is checked |
 | `sc-store-permission.S` | Store-conditionals need Store (not Load) permission: `sc.w` with a Load-only DDC, the explicit `sc.w.ddc`/`sc.w.cap` forms (not in Sail) and `sc.w`/`sc.d` in capability mode raise PermitStore; an SC through a Store-only capability succeeds |
+| `virtio-dma-clears-tags.S` | A virtio device (virtio-rng over legacy virtio-mmio, `# QEMU_ARGS`) writing a guest buffer through `address_space_map()` clears the tag of the capability it writes into and leaves its neighbour tagged |
 | `xthead-mem-cheri.S` | XTheadMemIdx/XTheadMemPair (accepted on CHERI CPUs) clear tags and obey DDC bounds and Store permission |
 | `interrupt-capmode.S` | An interrupt that arrives in capability mode with a small PCC (M-mode MSI, and an SSI delegated to S-mode) saves the whole PCC in MEPCC/SEPCC (tag, mode flag, bounds, address), runs the handler with MTCC/STCC, and `mret`/`sret` return to capability mode with the same PCC. RVFI-DII never delivers interrupts, so TestRIG cannot check this |
 | `pcc-bounds-cached-tb.S` | Code first translated under the full PCC still has its fetches checked when later run under a PCC covering one instruction (PCC bounds are part of QEMU's translation cache key) |
 | `data-endianness-fixed.S` | `mstatus` MBE/SBE/UBE stay 0 and data accesses stay little-endian (one capability memory format) |
 
-A `# QEMU_SMP: <n>` line runs a test with n harts. A `# XFAIL: <reason>` line marks a test that is known to fail; it is
+A `# QEMU_SMP: <n>` line runs a test with n harts, and `# QEMU_ARGS: <args>` adds QEMU options (devices). A `# XFAIL: <reason>` line marks a test that is known to fail; it is
 reported as `xfail` and does not fail the gate (`XPASS` when it starts
 passing). `cheri-v9.h` has shared macros for these tests, including an
 expected-trap handler (`check`, `trap_expect`, `expected_trap_handler`).
