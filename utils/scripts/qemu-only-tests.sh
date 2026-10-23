@@ -15,6 +15,8 @@
 #
 # Environment:
 #   CROSS_CC  RISC-V cross compiler (default: riscv64-linux-gnu-gcc)
+#   BENCH_INCLUDE  regex of test names (file name without .S) to run
+#   BENCH_EXCLUDE  regex of test names to skip
 set -u
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -29,6 +31,11 @@ trap 'rm -rf "$tmp"' EXIT
 status=0
 for src in "$dir"/*.S; do
   name=$(basename "$src" .S)
+  if { [ -n "${BENCH_INCLUDE:-}" ] && ! [[ $name =~ $BENCH_INCLUDE ]]; } ||
+     { [ -n "${BENCH_EXCLUDE:-}" ] && [[ $name =~ $BENCH_EXCLUDE ]]; }; then
+    echo "skipped: $name"
+    continue
+  fi
   cpu=$(sed -n 's/^# QEMU_CPU: *//p' "$src" | head -1)
   xfail=$(sed -n 's/^# XFAIL: *//p' "$src" | head -1)
   smp=$(sed -n 's/^# QEMU_SMP: *//p' "$src" | head -1)

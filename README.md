@@ -21,7 +21,7 @@ says what each one can and cannot judge.
 | 1. CHERI extension policy | QEMU refuses extensions that bypass capability checks (vector, hypervisor, pointer masking, Zicfiss/Zicfilp, big-endian, ...) and still starts the normal CPUs; every extension it offers is listed as reviewed in `regressions/cheri-extensions.txt`, and no CPU model crashes it |
 | 2. Saved regression traces | All 30 traces in `regressions/cheri-qemu-10.2/` (bugs that were found and fixed) and `regressions/cheri-guards/` replay without a difference from Sail. Traces of open bugs in `regressions/open-bugs/` must still fail |
 | 3. QEMU-only bare-metal tests | 29 tests in `regressions/qemu-only/` for CHERI behaviour the Sail model lacks (CW/CD/CRM/CRG page bits and TLB flushes, PMP, `amocas`/Zabha/Zcb/Zfh/Zicbo* and T-Head instructions in integer and capability mode, PCC bounds in cached code, interrupts in capability mode, two-hart tag consistency, UXL, endianness) |
-| 4. Random tests | Every QuickCheckVEngine template, comparing QEMU with Sail (29 of 37 run; 7 need hardware counters, `fpclear` is an open bug). Seeded (`SEED=`), failures saved to `random-failures/` as traces, then `coverage-check.py` fails if a CHERI instruction in `regressions/coverage-required.txt` never completed (or never faulted) |
+| 4. Random tests | Every QuickCheckVEngine template, comparing QEMU with Sail (30 of 37 run; 7 need hardware counters). Seeded (`SEED=`), failures saved to `random-failures/` as traces, then `coverage-check.py` fails if a CHERI instruction in `regressions/coverage-required.txt` never completed (or never faulted) |
 | 4b. Three-way vote (optional, `ALLIANCE_QEMU`) | Random tests of [CHERI-Alliance QEMU](https://github.com/CHERI-Alliance/qemu) `main` against this QEMU; each disagreement is replayed on Sail. Fails if this QEMU is the odd one out, or if both QEMUs differ from Sail; reports Alliance-only differences |
 | 5. CheriBSD (optional, `CHERIBSD_OUTPUT`) | Boots CheriBSD and runs `cheribsdtest-purecap` and `cheribsdtest-hybrid`; any `FAIL` fails the gate |
 | 6. Upstream QEMU (optional, `UPSTREAM_BUILD`, `ARCH_TEST`) | Unmodified upstream QEMU v10.2.0 is the reference for non-CHERI behaviour: upstream's own check-tcg and qtests run on this QEMU, and every RV64 riscv-arch-test program gives the same signature and instruction trace on both (`upstream-diff.py`, known differences with reasons in `utils/upstream-diff/expected.txt`) |
@@ -162,6 +162,69 @@ while it runs: bash reads the script as it goes. Environment variables
 `QCVENGINE`, `CROSS_CC`, `VOTE_TESTS` and the optional stages' variables are
 described at the top of the script. `CHERIBSD_LOG` sets where the
 CheriBSD console log is written (default `cheribsd-tests.log`).
+
+### Turning tests on and off
+
+Every run first prints its plan, one line per stage: `run`, `skip: <why>`,
+or `ERROR: <why>` (a stage you asked for that cannot run; the gate stops).
+Add `--list` to print only the plan, without running anything.
+
+**Stages.** Name them or use their numbers, comma-separated, in `--only`
+(run just these) or `--skip` (run all but these):
+
+| Stage | Name (number) | On by default? | Turn on | Turn off |
+|---|---|---|---|---|
+| CHERI extension policy | `policy` (1) | yes | - | `--skip policy` |
+| Saved regression traces vs Sail | `regressions` (2) | yes | - | `--skip regressions` |
+| Bench (QEMU-only tests) | `bench` (3) | yes, if a RISC-V cross compiler is found | `CROSS_CC=...` | `--skip bench` |
+| Random tests vs Sail | `random` (4) | yes | - | `--skip random` |
+| Coverage of the random tests | `coverage` | yes, unless templates are selected | `--only ...,coverage` | `--skip coverage` |
+| Three-way vote with CHERI-Alliance QEMU | `vote` (4b) | when its QEMU is given | `--alliance PATH` | `--skip vote` |
+| CheriBSD `cheribsdtest` | `cheribsd` (5) | when its image is given | `--cheribsd DIR` | `--skip cheribsd` |
+| Upstream QEMU 10.2 comparison | `upstream` (6) | when its build is given | `--upstream-build DIR` (+ `--arch-test DIR`) | `--skip upstream` |
+
+**References.** `--against sail,alliance,upstream` keeps only the stages
+that compare against those references (sail: `regressions`, `random`,
+`coverage`; alliance: `vote`; upstream: `upstream`); `policy`, `bench` and
+`cheribsd` need no reference and still run unless skipped. A stage named in
+`--only` or `--against` whose reference is not given is an error.
+
+**Individual tests** (regular expressions on names):
+
+| What | Run only matching | Skip matching | Names are |
+|---|---|---|---|
+| Random-test templates (stages 4, 4b) | `--templates RE` | `--exclude RE` | template names, e.g. `caparith`, `fpclear` (the random stage prints each as `<name> -- <description>`) |
+| Bench tests (stage 3) | `--bench RE` | `--bench-exclude RE` | files in `regressions/qemu-only/` without `.S` |
+| Regression traces (stage 2) | - | `--trace-exclude RE` | file names in `regressions/*/`, e.g. `^31-` |
+| riscv-arch-test suites (stage 6) | `--suites I,M,Zacas` | - | directories in `riscv-test-suite/rv64i_m/` |
+
+Skipped tests are printed (`skipped: <name>`), so a filtered run never
+looks like a full one. Selecting templates also skips the coverage check,
+which would otherwise fail on the instructions the other templates run.
+
+**Examples:**
+
+```sh
+G=utils/scripts/testrig-gate.sh
+$G --list --config utils/gate-profiles/full.conf $QEMU   # what would run?
+$G --only policy,regressions,bench $QEMU                  # fast: no random tests
+$G --skip cheribsd,vote $QEMU 100                         # everything else
+$G --against sail $QEMU 100                               # only Sail comparisons
+$G --against alliance --alliance /path/to/qemu-system-riscv64xcheri $QEMU 50
+$G --only random --templates '^cap' --exclude 'caprvc' $QEMU 200
+$G --only bench --bench '^pte-' --bench-exclude 'pmp' $QEMU
+$G --trace-exclude '^0[1-4]-' $QEMU
+$G --only upstream --suites I,M,Zacas --upstream-build ... --arch-test ... $QEMU
+```
+
+**Saved setups.** `--config FILE` reads `VAR=value` lines (the environment
+variables at the top of `testrig-gate.sh`, e.g. `ONLY=`, `SKIP=`,
+`EXCLUDE=`, `ALLIANCE_QEMU=`); options on the command line win, so
+`--config full.conf --skip cheribsd` works. `utils/gate-profiles/` has
+`quick.conf` (stages 1-3), `sail.conf` (every Sail comparison) and
+`full.conf` (every stage, with the references in `~/Projects/CAPSTONE`).
+With no options the gate behaves as before: every stage whose reference
+is configured runs.
 
 ### Smaller runs
 
