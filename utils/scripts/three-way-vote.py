@@ -19,16 +19,22 @@ The traces come from random QuickCheckVEngine tests of Alliance against the
 port (-n, saved with --save-dir) and/or from an existing directory (--traces).
 Traces are grouped by their first mismatching instruction and fields.
 
+Each runTestRIG.py run is killed after --timeout seconds (it, its QEMUs and
+QCVEngine), so a hung implementation cannot stall the gate; a timeout fails
+the vote. If an implementation dies, QCVEngine skips the remaining templates;
+the vote lists them.
+
 Usage: three-way-vote.py --port QEMU --alliance QEMU --out DIR
                          [-n TESTS [--seed N] [--test-include-regex RE]]
-                         [--traces DIR]
-Exits 1 if any trace is port-differs or both-differ.
+                         [--traces DIR] [--timeout SECONDS]
+Exits 1 if any trace is port-differs or both-differ, or a run timed out.
 """
 import argparse
 import collections
 import os
 import re
 import shutil
+import signal
 import subprocess as sub
 import sys
 
@@ -55,11 +61,16 @@ parser.add_argument("--test-include-regex", default=None)
 parser.add_argument("--test-exclude-regex", default=None)
 parser.add_argument("--traces", default=None,
                     help="directory of existing traces to classify as well")
+# The longest vote so far (100 tests per template) took about 2 hours.
+parser.add_argument("--timeout", type=int, default=4 * 3600,
+                    help="seconds before a runTestRIG.py run is killed")
 args = parser.parse_args()
+timed_out = []
 
 
-def run(a, b, extra):
-    """Run runTestRIG.py with Sail or a QEMU as A and B; return its output."""
+def run(a, b, extra, log):
+    """Run runTestRIG.py with Sail or a QEMU as A and B; return its output.
+    The output also goes to log as it is produced (tail -f it to follow)."""
     cmd = [sys.executable, RUN, "-a", a[0], "-b", b[0],
            "--path-to-QCVEngine", args.qcvengine, "-r", args.arch,
            "--support-misaligned", "-s", "2", "--continue-on-fail"]
@@ -72,13 +83,26 @@ def run(a, b, extra):
         cmd += ["--qemu-cpu-extra", args.cpu_extra]
     if args.csr_exclude_regex:
         cmd += ["--csr-exclude-regex", args.csr_exclude_regex]
-    p = sub.run(cmd + extra, stdout=sub.PIPE, stderr=sub.STDOUT, text=True)
-    return p.stdout
+    with open(log, "w") as f:
+        # Own process group, so a timeout also kills the QEMUs and QCVEngine.
+        p = sub.Popen(cmd + extra, stdout=f, stderr=sub.STDOUT,
+                      start_new_session=True)
+        try:
+            p.wait(timeout=args.timeout)
+        except sub.TimeoutExpired:
+            os.killpg(p.pid, signal.SIGKILL)
+            p.wait()
+            timed_out.append(os.path.basename(log))
+            print("Timed out after %d s: %s" % (args.timeout, log))
+    with open(log) as f:
+        return f.read()
 
 
 def replay(a, b, tracedir):
     """Replay every trace in tracedir; return {file name: passed}."""
-    out = run(a, b, ["--no-save", "--no-shrink", "-d", tracedir])
+    name = "replay-sail-vs-%s.log" % ("port" if b is PORT else "alliance")
+    out = run(a, b, ["--no-save", "--no-shrink", "-d", tracedir],
+              os.path.join(args.out, name))
     result, current = {}, None
     for line in out.splitlines():
         m = re.match(r"Reading trace from (.*\.S)$", line)
@@ -120,18 +144,31 @@ if args.number_of_tests:
         extra += ["--test-include-regex", args.test_include_regex]
     if args.test_exclude_regex:
         extra += ["--test-exclude-regex", args.test_exclude_regex]
-    log = run(ALLIANCE, PORT, extra)
-    with open(os.path.join(args.out, "alliance-vs-port.log"), "w") as f:
-        f.write(log)
+    log = run(ALLIANCE, PORT, extra, os.path.join(args.out, "alliance-vs-port.log"))
     seed = re.search(r"Random seed: (\d+)", log)
+    if not seed and not timed_out:
+        # QCVEngine prints the seed first; without it nothing was compared
+        # (e.g. a QEMU failed to start) and zero disagreements mean nothing.
+        # (A killed QCVEngine may not have flushed it, hence the timeout case.)
+        print("Alliance against the port: the random tests did not run "
+              "(see alliance-vs-port.log)")
+        print("THREE-WAY VOTE: FAIL (random tests did not run)")
+        sys.exit(1)
     print("Alliance against the port: %d disagreements saved (seed %s)"
           % (len(os.listdir(traces)), seed.group(1) if seed else "?"))
+    skipped = re.findall(r"Skipping (\S+): an implementation has died", log)
+    if skipped:
+        print("An implementation died; templates not voted on: %s"
+              % ", ".join(skipped))
 if args.traces:
     for name in os.listdir(args.traces):
         if name.endswith(".S"):
             shutil.copy(os.path.join(args.traces, name), traces)
 
 if not any(n.endswith(".S") for n in os.listdir(traces)):
+    if timed_out:
+        print("THREE-WAY VOTE: FAIL (timed out)")
+        sys.exit(1)
     print("THREE-WAY VOTE: PASS (no traces where the QEMUs disagree)")
     sys.exit(0)
 
@@ -166,5 +203,8 @@ with open(os.path.join(args.out, "vote-summary.txt"), "w") as f:
 print(summary)
 failed = any(v in ("port-differs", "both-differ", "not-replayed")
              for v, _ in groups)
+if timed_out:
+    print("Timed out: %s" % ", ".join(timed_out))
+    failed = True
 print("THREE-WAY VOTE: %s" % ("FAIL" if failed else "PASS"))
 sys.exit(1 if failed else 0)
