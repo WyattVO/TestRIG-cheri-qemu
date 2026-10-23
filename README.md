@@ -194,6 +194,7 @@ that compare against those references (sail: `regressions`, `random`,
 | What | Run only matching | Skip matching | Names are |
 |---|---|---|---|
 | Random-test templates (stages 4, 4b) | `--templates RE` | `--exclude RE` | template names, e.g. `caparith`, `fpclear` (the random stage prints each as `<name> -- <description>`) |
+| Templates in the three-way vote only (stage 4b) | - | `--vote-exclude RE` | as above; `full.conf` leaves out `caprandom`, which crashes CHERI-Alliance QEMU (the vote stops at a crash) |
 | Bench tests (stage 3) | `--bench RE` | `--bench-exclude RE` | files in `regressions/qemu-only/` without `.S` |
 | Regression traces (stage 2) | - | `--trace-exclude RE` | file names in `regressions/*/`, e.g. `^31-` |
 | riscv-arch-test suites (stage 6) | `--suites I,M,Zacas` | - | directories in `riscv-test-suite/rv64i_m/` |

@@ -56,6 +56,8 @@
 # Turning off individual tests (regular expressions on names):
 #   --templates RE      random-test templates to run (stages 4 and 4b)
 #   --exclude RE        random-test templates to skip (stages 4 and 4b)
+#   --vote-exclude RE   templates to skip in the three-way vote only (4b), e.g.
+#                       ones that crash CHERI-Alliance QEMU (full.conf: caprandom)
 #   --bench RE          bench tests to run (stage 3, test file name without .S)
 #   --bench-exclude RE  bench tests to skip
 #   --trace-exclude RE  regression traces to skip (stage 2, file name)
@@ -85,6 +87,7 @@
 #   ALLIANCE_QEMU  CHERI-Alliance qemu-system-riscv64xcheri with RVFI-DII
 #             (stage 4b)
 #   VOTE_TESTS  random tests per template in stage 4b (default: tests-per-template)
+#   VOTE_EXCLUDE  as --vote-exclude (default: none)
 #   UPSTREAM_BUILD  build directory of upstream QEMU v10.2.0 (riscv64-softmmu,
 #             --enable-plugins; stage 6)
 #   ARCH_TEST  riscv-arch-test checkout (stage 6's arch-test comparison)
@@ -114,6 +117,7 @@ while [ $# -gt 0 ]; do
     --bench) opt[BENCH_INCLUDE]=$2; shift ;;
     --bench-exclude) opt[BENCH_EXCLUDE]=$2; shift ;;
     --trace-exclude) opt[TRACE_EXCLUDE]=$2; shift ;;
+    --vote-exclude) opt[VOTE_EXCLUDE]=$2; shift ;;
     --suites) opt[UPSTREAM_SUITES]=$2; shift ;;
     --alliance) opt[ALLIANCE_QEMU]=$2; shift ;;
     --upstream-build) opt[UPSTREAM_BUILD]=$2; shift ;;
@@ -141,6 +145,12 @@ arch=${ARCH:-rv64imsafdcZicsr_Zifencei_Xcheri}
 csr_exclude=${CSR_EXCLUDE-^(misa|mstatus|sstatus|mscratch|sscratch|mip|mie|mideleg|medeleg|sccsr|mhpmevent[0-9]+|m?cycleh?|m?instreth?|timeh?|m?hpmcounter[0-9]+h?|reserved)\$}
 templates=${TEMPLATES-}
 exclude=${EXCLUDE-}
+vote_exclude=${VOTE_EXCLUDE-}
+if [ -n "$exclude" ] && [ -n "$vote_exclude" ]; then
+  vote_exclude="($exclude)|($vote_exclude)"
+else
+  vote_exclude=$exclude$vote_exclude
+fi
 seed=${SEED:-$(( $(date +%s) % 1000000000 ))}
 save_dir=${SAVE_DIR:-$root/random-failures}
 cpu_extra=${QEMU_CPU_EXTRA-zba=true,zbb=true,zbc=true,zbs=true}
@@ -218,6 +228,7 @@ for s in $STAGES; do
   fi
 done
 [ -n "$templates$exclude" ] && echo "  templates: ${templates:-all}${exclude:+, excluding $exclude}"
+[ -n "${VOTE_EXCLUDE-}" ] && echo "  vote templates: excluding $vote_exclude"
 [ -n "${BENCH_INCLUDE-}${BENCH_EXCLUDE-}" ] &&
   echo "  bench tests: ${BENCH_INCLUDE:-all}${BENCH_EXCLUDE:+, excluding $BENCH_EXCLUDE}"
 [ -n "${TRACE_EXCLUDE-}" ] && echo "  traces: excluding $TRACE_EXCLUDE"
@@ -378,7 +389,7 @@ if want vote; then
     -n "${VOTE_TESTS:-$ntests}" ${cpu_extra:+--cpu-extra "$cpu_extra"} \
     ${csr_exclude:+--csr-exclude-regex "$csr_exclude"} \
     ${templates:+--test-include-regex "$templates"} \
-    ${exclude:+--test-exclude-regex "$exclude"} || status=1
+    ${vote_exclude:+--test-exclude-regex "$vote_exclude"} || status=1
 fi
 
 if want cheribsd; then
