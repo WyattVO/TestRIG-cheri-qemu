@@ -32,7 +32,8 @@ is good at:
 | Oracle | Judges | Stage | Blind spots |
 |---|---|---|---|
 | Sail CHERI-RISC-V model (CHERI v9) | every base CHERI instruction, through RVFI-DII | 2, 4 | features it lacks (above); its own bugs (`LoadResCapCap`, the reservation it kept across test resets) |
-| CHERI-Alliance QEMU (`main`, QEMU 7.2) | second opinion on the same random tests: a disagreement replayed on Sail says which QEMU is the odd one out | 4b | shares CHERI-QEMU's history (it has traces 28/29's bugs and lacks `fpclear`, trace 31), no Zacas/Zabha; never the referee |
+| CHERI-Alliance QEMU (`main`, QEMU 7.2) | second reference next to Sail: every Sail difference (stages 2, 4) and every QEMU disagreement (4b) is replayed on all three; disagreeing with both references is an ERROR, with one a WARNING (README, "ERROR and WARNING") | 2, 4, 4b | shares CHERI-QEMU's history (it has traces 28/29's bugs and lacks `fpclear`, trace 31), so where it is known to share a bug (`regressions/alliance-shares-bug.txt`) Sail alone judges, and other shared bugs are only a WARNING (`sail-disagrees`); no Zacas/Zabha |
+| CHERI-QEMU 7.1 (`cheri-qemu-port`) | a QEMU with known bugs: the gate must give it fixed verdicts on the regression traces (`utils/gate-selftest/qemu-7.1-expected.txt`) | 2b | tests the gate, not the port; needs a line per new trace |
 | This bench (specifications) | features Sail lacks, system properties | 3 | only what a test was written for |
 | Upstream QEMU v10.2.0 | non-CHERI behaviour: a CHERI CPU outside capability mode must run plain RISC-V exactly as upstream does (riscv-arch-test signatures and instruction traces; upstream's own check-tcg and qtests) | 6 | upstream's own bugs (`amocas` with rd = x0); nothing about CHERI |
 | CheriBSD `cheribsdtest` | the whole system | 5 | slow; finds, does not locate |

@@ -244,7 +244,28 @@ the reserved value is unchanged.
   first. QEMU raises illegal instruction. The gate enables A, so this does not
   occur there.
 
+## alliance-shares-bug.txt
+
+When CHERI-Alliance QEMU is the second reference (`ALLIANCE_QEMU`), a
+difference from Sail is only a WARNING if Alliance behaves like this QEMU.
+Alliance shares code with CHERI-QEMU 7.1, so for 14 of the traces above it
+has the same bug 7.1 had: 07, 09, 11, 13, 14, 16, 18, 19, 22, 23, 24, 27, 28
+and 30. `alliance-shares-bug.txt` lists those traces and the instructions
+involved (`cclear`, `cgettop`, `fpclear`, `ccopytype`, `ccseal`, `sc.c`,
+`amoswap.c`). There Sail alone judges, so a regression is an ERROR. When a
+`sail-disagrees` WARNING turns out to be a bug both QEMUs share, add it here.
+
 ## Checking the gate itself
+
+**Stage 2b, the 7.1 self-test.** The gate replays `cheri-qemu-10.2/` on
+CHERI-QEMU 7.1, which still has most of these bugs, and requires exactly the
+verdicts in `utils/gate-selftest/qemu-7.1-expected.txt`: 27 ERRORs (6
+`port-differs`, 7 `both-differ`, 14 `sail-only-differs`) and 4
+`no-difference` (04, 12, 20, 21: bugs that came with the 10.2 port). A
+changed verdict fails the stage, as checked by editing one expected line
+(27-cgettop, 2026-10-23). A new trace here needs a line in that file.
+
+**Reverted fixes.**
 
 A gate that always passes proves nothing, so it was run against a deliberately
 broken QEMU (cheri-10.2 with these fixes reverted, 2026-10-14):

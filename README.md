@@ -3,8 +3,11 @@
 This fork of [CTSRD-CHERI/TestRIG](https://github.com/CTSRD-CHERI/TestRIG) is
 the regression gate for the QEMU 10.2 CHERI-RISC-V port
 ([WyattVO/cheri-qemu-port](https://github.com/WyattVO/cheri-qemu-port/tree/cheri-10.2),
-branch `cheri-10.2`). It checks QEMU instruction by instruction against the
-Sail CHERI-RISC-V reference model, and at system level by booting CheriBSD.
+branch `cheri-10.2`). It checks QEMU instruction by instruction against two
+references, the Cambridge Sail CHERI-RISC-V model and CHERI-Alliance QEMU
+(an ERROR when this QEMU disagrees with both, a WARNING when with one), against
+upstream QEMU 10.2 for non-CHERI behaviour, and at system level by booting
+CheriBSD.
 Any change to that QEMU branch, including AI-written ones and future rebases,
 is meant to pass this gate first. The original TestRIG README follows after
 this section.
@@ -12,22 +15,69 @@ this section.
 ## The gate
 
 `utils/scripts/testrig-gate.sh <qemu-system-riscv64xcheri> [tests-per-template]`
-runs up to seven stages and fails if any of them fails. Each stage has its
+runs up to eight stages and fails if any of them reports an ERROR. Each stage has its
 own reference ("oracle"); [TESTBENCH.md](TESTBENCH.md#oracles-what-each-stage-compares-against)
 says what each one can and cannot judge.
 
 | Stage | What it checks |
 |---|---|
 | 1. CHERI extension policy | QEMU refuses extensions that bypass capability checks (vector, hypervisor, pointer masking, Zicfiss/Zicfilp, big-endian, ...) and still starts the normal CPUs; every extension it offers is listed as reviewed in `regressions/cheri-extensions.txt`, and no CPU model crashes it |
-| 2. Saved regression traces | All 30 traces in `regressions/cheri-qemu-10.2/` (bugs that were found and fixed) and `regressions/cheri-guards/` replay without a difference from Sail. Traces of open bugs in `regressions/open-bugs/` must still fail |
+| 2. Saved regression traces | All 31 traces in `regressions/cheri-qemu-10.2/` (bugs that were found and fixed) and `regressions/cheri-guards/` replay on both references (see [ERROR and WARNING](#error-and-warning-two-references) below). Traces of open bugs in `regressions/open-bugs/` must still fail against Sail |
+| 2b. Gate self-test (optional, `SELFTEST_QEMU`) | Replays the stage 2 traces on CHERI-QEMU 7.1, which still has the bugs they caught, and requires exactly the verdicts in `utils/gate-selftest/qemu-7.1-expected.txt` (27 ERRORs of 31). Proves the gate still catches those bugs; fails if a change to the gate, Sail or Alliance grades differently |
 | 3. QEMU-only bare-metal tests | 29 tests in `regressions/qemu-only/` for CHERI behaviour the Sail model lacks (CW/CD/CRM/CRG page bits and TLB flushes, PMP, `amocas`/Zabha/Zcb/Zfh/Zicbo* and T-Head instructions in integer and capability mode, PCC bounds in cached code, interrupts in capability mode, two-hart tag consistency, UXL, endianness) |
-| 4. Random tests | Every QuickCheckVEngine template, comparing QEMU with Sail (30 of 37 run; 7 need hardware counters). Seeded (`SEED=`), failures saved to `random-failures/` as traces, then `coverage-check.py` fails if a CHERI instruction in `regressions/coverage-required.txt` never completed (or never faulted) |
-| 4b. Three-way vote (optional, `ALLIANCE_QEMU`) | Random tests of [CHERI-Alliance QEMU](https://github.com/CHERI-Alliance/qemu) `main` against this QEMU; each disagreement is replayed on Sail. Fails if this QEMU is the odd one out, or if both QEMUs differ from Sail; reports Alliance-only differences |
+| 4. Random tests | Every QuickCheckVEngine template, comparing QEMU with Sail (30 of 37 run; 7 need hardware counters). Seeded (`SEED=`), failures saved to `random-failures/` as traces and replayed on CHERI-Alliance QEMU too, then `coverage-check.py` fails if a CHERI instruction in `regressions/coverage-required.txt` never completed (or never faulted) |
+| 4b. Three-way vote (optional, `ALLIANCE_QEMU`) | Random tests of [CHERI-Alliance QEMU](https://github.com/CHERI-Alliance/qemu) `main` against this QEMU; each disagreement is replayed on Sail. ERROR if this QEMU disagrees with both, WARNING if only with one |
 | 5. CheriBSD (optional, `CHERIBSD_OUTPUT`) | Boots CheriBSD and runs `cheribsdtest-purecap` and `cheribsdtest-hybrid`; any `FAIL` fails the gate |
 | 6. Upstream QEMU (optional, `UPSTREAM_BUILD`, `ARCH_TEST`) | Unmodified upstream QEMU v10.2.0 is the reference for non-CHERI behaviour: upstream's own check-tcg and qtests run on this QEMU, and every RV64 riscv-arch-test program gives the same signature and instruction trace on both (`upstream-diff.py`, known differences with reasons in `utils/upstream-diff/expected.txt`) |
 
+### ERROR and WARNING: two references
+
+The CHERI instructions have two references: the Cambridge Sail model
+([CTSRD-CHERI/sail-cheri-riscv](https://github.com/CTSRD-CHERI/sail-cheri-riscv))
+and CHERI-Alliance QEMU. With `ALLIANCE_QEMU` (or `--alliance`) set, stages
+2, 4 and 4b replay each trace on Sail, CHERI-Alliance QEMU and this QEMU
+(`three-way-vote.py`) and grade it:
+
+| Level | When | Verdicts | Gate |
+|---|---|---|---|
+| **ERROR** | this QEMU disagrees with **both** references, or a replay gave no answer | `port-differs` (Sail and Alliance agree), `both-differ` (all three differ), `not-replayed` | fails |
+| **WARNING** | this QEMU disagrees with **one** reference | `sail-disagrees` (both QEMUs agree, Sail differs), `alliance-differs` (this QEMU agrees with Sail) | passes, `TESTRIG GATE: PASS (N warnings)`; the warnings are listed at the end |
+
+`--warnings-fatal` (or `WARNINGS_FATAL=1`) makes WARNINGs fail the gate too.
+Without `ALLIANCE_QEMU`, or with `--against` not naming `alliance`, Sail is
+the only reference and every difference from it is an ERROR, as before.
+
+**Where Alliance is known to be wrong, Sail alone judges.** CHERI-Alliance
+QEMU shares code, and bugs, with CHERI-QEMU 7.1: of the 27 bugs 7.1 still
+has from `regressions/cheri-qemu-10.2/`, Alliance has 14 too. Without
+special handling those 14 would be only `sail-disagrees` WARNINGs, so a
+10.2 regression on one of them would pass the gate.
+`regressions/alliance-shares-bug.txt` lists them (traces 07, 09, 11, 13,
+14, 16, 18, 19, 22, 23, 24, 27, 28, 30, with reasons) and the instructions
+Alliance gets wrong (`cclear`, `cgettop`, `fpclear`, `ccopytype`, `ccseal`,
+`sc.c`, `amoswap.c`). A listed trace, or a random failure whose first
+mismatch is on a listed instruction, is `sail-only-differs` (ERROR) if this
+QEMU differs from Sail and `sail-only-agrees` (ok) if not. `SAIL_ONLY=` names
+another list; `SAIL_ONLY=` empty turns it off.
+
+**The 7.1 self-test (stage 2b)** keeps this honest. 7.1 is not changed, so
+its verdicts are a constant: 6 `port-differs`, 7 `both-differ`, 14
+`sail-only-differs`, 4 `no-difference` (bugs that came with the 10.2 port).
+The stage fails on any change and prints the difference. A new trace in
+`regressions/cheri-qemu-10.2/` needs a line in the expected file. The
+self-test was checked by changing one expected verdict (it failed).
+
+On `cheri-10.2` the regression traces give 7 `alliance-differs` WARNINGs
+(traces 05, 08, 10, 15, 25, 26, 31: bugs Alliance has and 7.1 has
+differently) and no ERROR. Other `sail-disagrees` WARNINGs can still be
+real bugs both QEMUs share: read them before you trust a PASS, or use
+`--warnings-fatal`. If a trace hangs or kills a simulator (Alliance hangs on
+trace 08, a reserved SCR), the remaining traces are replayed in a new run.
+
 Last full run on `cheri-10.2` (2026-10-15, 300 tests per template, about 31
-minutes): every stage passed. `cheribsdtest-purecap` passed 305 with 10
+minutes, before stages 2b/4b and the two-reference grading existed): every
+stage passed. With the grading (2026-10-23), stage 2 passes with 7
+`alliance-differs` WARNINGs and stage 2b passes; each takes about 2 minutes. `cheribsdtest-purecap` passed 305 with 10
 expected failures, and `cheribsdtest-hybrid` passed 149 with 52.
 
 [TESTBENCH.md](TESTBENCH.md) explains the CHERI test bench (stage 3): what each
@@ -45,9 +95,16 @@ legitimately differ, and how the gate was itself checked by reverting fixes.
   - Give QEMU's test CPU an MMU with Sail's paging behaviour (Sv39/Sv48,
     Svade). Before this, paging was never tested.
 - **The gate** (`utils/scripts/testrig-gate.sh`, `qemu-only-tests.sh`,
-  `cheribsd-tests.py`): the five stages above. Regressions are replayed with
-  `--continue-on-fail`, so one failure can't hide another.
-- **Regression traces** `regressions/cheri-qemu-10.2/01`-`28`, plus the
+  `cheribsd-tests.py`, `three-way-vote.py`, `upstream-tests.sh`,
+  `upstream-diff.py`, `coverage-check.py`): the stages above, which can be
+  turned on and off one by one. Regressions are replayed with
+  `--continue-on-fail`, and a replay that a crashing simulator cut short is
+  resumed, so one failure can't hide another.
+- **Two references with ERROR and WARNING** (`three-way-vote.py`):
+  stages 2, 4 and 4b grade every trace against Sail and CHERI-Alliance QEMU;
+  `regressions/alliance-shares-bug.txt` says where Alliance is known to be
+  wrong, and the 7.1 self-test (`utils/gate-selftest/`) checks the grading.
+- **Regression traces** `regressions/cheri-qemu-10.2/01`-`31`, plus the
   bare-metal tests in `regressions/qemu-only/`. `.gitignore` used to ignore
   every `.S` file, so saved traces are now exempted.
 - **QuickCheckVEngine** points at
@@ -129,6 +186,10 @@ mkdir cheri-qemu-port/build && cd cheri-qemu-port/build
   ../configure --meson=$(which meson) --target-list=riscv64xcheri-softmmu --enable-rvfi-dii \
       --disable-werror --disable-docs --disable-slirp --disable-rdma && ninja
   ```
+- For stage 2b, build CHERI-QEMU 7.1 (`cheri-qemu-port` at the 7.1 baseline)
+  with `--enable-rvfi-dii` in the same way as step 4, and pass it as
+  `SELFTEST_QEMU` / `--selftest-qemu` (with `ALLIANCE_QEMU`). It must be
+  the 7.1 the expected verdicts were made with; it is never changed.
 - For stage 6, build upstream QEMU v10.2.0 with plugins and its RISC-V
   check-tcg tests, and check out riscv-arch-test 3.9.1:
   ```sh
@@ -153,10 +214,12 @@ utils/scripts/testrig-gate.sh $QEMU 300                                    # sta
 CHERIBSD_OUTPUT=~/cheri/output utils/scripts/testrig-gate.sh $QEMU 300     # plus CheriBSD
 ALLIANCE_QEMU=/path/to/alliance-qemu/build/qemu-system-riscv64xcheri \
 UPSTREAM_BUILD=/path/to/upstream-qemu-10.2/build ARCH_TEST=/path/to/riscv-arch-test \
-CHERIBSD_OUTPUT=~/cheri/output utils/scripts/testrig-gate.sh $QEMU 100     # every stage
+CHERIBSD_OUTPUT=~/cheri/output utils/scripts/testrig-gate.sh $QEMU 100     # all but 2b
+utils/scripts/testrig-gate.sh --config utils/gate-profiles/full.conf $QEMU 100  # every stage, refs in ~/Projects/CAPSTONE
 ```
 
-It ends with `TESTRIG GATE: PASS` or `FAIL`. Don't edit `testrig-gate.sh`
+It ends with `TESTRIG GATE: PASS`, `PASS (N warnings)` (listed just above)
+or `FAIL`. Don't edit `testrig-gate.sh`
 while it runs: bash reads the script as it goes. Environment variables
 `EXCLUDE`, `SEED`, `SAVE_DIR`, `ARCH`, `CSR_EXCLUDE`, `QEMU_CPU_EXTRA`,
 `QCVENGINE`, `CROSS_CC`, `VOTE_TESTS` and the optional stages' variables are
@@ -167,7 +230,9 @@ CheriBSD console log is written (default `cheribsd-tests.log`).
 
 Every run first prints its plan, one line per stage: `run`, `skip: <why>`,
 or `ERROR: <why>` (a stage you asked for that cannot run; the gate stops).
-Add `--list` to print only the plan, without running anything.
+Add `--list` to print only the plan, without running anything. The plan also
+says which references stages 2 and 4 use. `--warnings-fatal` makes WARNINGs
+fail the gate (see [ERROR and WARNING](#error-and-warning-two-references)).
 
 **Stages.** Name them or use their numbers, comma-separated, in `--only`
 (run just these) or `--skip` (run all but these):
@@ -176,6 +241,7 @@ Add `--list` to print only the plan, without running anything.
 |---|---|---|---|---|
 | CHERI extension policy | `policy` (1) | yes | - | `--skip policy` |
 | Saved regression traces vs Sail | `regressions` (2) | yes | - | `--skip regressions` |
+| Gate self-test on CHERI-QEMU 7.1 | `selftest` (2b) | when its QEMU and Alliance are given | `--selftest-qemu PATH` (+ `--alliance`) | `--skip selftest` |
 | Bench (QEMU-only tests) | `bench` (3) | yes, if a RISC-V cross compiler is found | `CROSS_CC=...` | `--skip bench` |
 | Random tests vs Sail | `random` (4) | yes | - | `--skip random` |
 | Coverage of the random tests | `coverage` | yes, unless templates are selected | `--only ...,coverage` | `--skip coverage` |
@@ -185,7 +251,7 @@ Add `--list` to print only the plan, without running anything.
 
 **References.** `--against sail,alliance,upstream` keeps only the stages
 that compare against those references (sail: `regressions`, `random`,
-`coverage`; alliance: `vote`; upstream: `upstream`); `policy`, `bench` and
+`coverage`; alliance: `vote`, `selftest`; upstream: `upstream`); `policy`, `bench` and
 `cheribsd` need no reference and still run unless skipped. A stage named in
 `--only` or `--against` whose reference is not given is an error.
 
@@ -256,10 +322,15 @@ python3 utils/scripts/cheribsd-tests.py $QEMU ~/cheri/output  # stage 5 only
 - A random failure prints the run's seed; `SEED=<n>` reruns the same tests,
   and `--seed <n> -I '^<template>$'` reruns one template's tests (template
   seeds depend only on the seed and the template, not on the regexes).
-- Stage 4b: `port-differs` is a bug in this QEMU; `both-differ` needs the
-  spec (so far: a missing QEMU instruction, a Sail bug, an allowed
-  difference); `alliance-differs` is for the upstream bug report. The
-  shrunk traces are in `random-failures/vote-<seed>/traces/`.
+- Two references (stages 2, 4, 4b): `ERROR port-differs` is a bug in this
+  QEMU; `ERROR both-differ` needs the spec (so far: a missing QEMU
+  instruction, a Sail bug, an allowed difference); `WARNING sail-disagrees`
+  is a bug both QEMUs share, or a Sail bug (if it is a shared bug, add it
+  to `regressions/alliance-shares-bug.txt`); `ERROR sail-only-differs` is a
+  difference from Sail where Alliance is known to be wrong;
+  `WARNING alliance-differs` is for the upstream bug report. Each stage writes `vote-summary.txt` and the
+  traces: `random-failures/vote-<seed>/` (4b), `random-<seed>-judged/` (4),
+  `regressions-<directory>/` (2).
 
 ---
 
