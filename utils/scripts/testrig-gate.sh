@@ -13,6 +13,12 @@
 #                  likely to change). regressions/open-bugs/ holds traces of
 #                  known, unfixed bugs: each must still fail (reported, not
 #                  fatal); one that passes is reported as XPASS.
+#   2b selftest    Check the gate itself: replay regressions/cheri-qemu-10.2 on
+#                  CHERI-QEMU 7.1 (SELFTEST_QEMU), which still has the bugs
+#                  10.2 fixed, and require exactly the verdicts in
+#                  utils/gate-selftest/qemu-7.1-expected.txt (needs
+#                  ALLIANCE_QEMU too). A change means the gate (or Sail, or
+#                  Alliance) now grades differently.
 #   3 bench        Run the bare-metal tests in regressions/qemu-only, which
 #                  check CHERI properties of QEMU features the Sail model
 #                  lacks (needs CROSS_CC or riscv64-linux-gnu-gcc).
@@ -39,6 +45,16 @@
 # it was asked for with --only or --against (then it is an error). The plan
 # (what runs, what is skipped and why) is printed first.
 #
+# Two references for CHERI instructions: with ALLIANCE_QEMU set, every trace
+# where stages 2 and 4 find this QEMU differing from Sail is also replayed on
+# CHERI-Alliance QEMU (three-way-vote.py --traces), and stage 2 replays every
+# trace on all three. Disagreeing with both references is an ERROR (the gate
+# fails); disagreeing with one is a WARNING (listed at the end; fatal with
+# --warnings-fatal). Without ALLIANCE_QEMU, Sail is the only reference and
+# every difference from it is an ERROR. Where Alliance is known to be wrong
+# (regressions/alliance-shares-bug.txt: the bugs it shares with CHERI-QEMU
+# 7.1), Sail alone judges and every difference is an ERROR.
+#
 # Usage: testrig-gate.sh [options] <path/to/qemu-system-riscv64xcheri> [tests-per-template]
 #
 # Choosing what runs (names or numbers above, comma-separated):
@@ -46,13 +62,14 @@
 #   --skip STAGES       skip these stages
 #   --against REFS      run only the stages that compare against these
 #                       references: sail (regressions, random, coverage),
-#                       alliance (vote), upstream (upstream); the stages that
+#                       alliance (vote, selftest), upstream (upstream); the stages that
 #                       need no reference (policy, bench, cheribsd) still run
 #                       unless skipped
 #   --config FILE       read settings (VAR=value lines, the environment
 #                       variables below) from FILE; options given on the
 #                       command line win. Examples: utils/gate-profiles/
 #   --list              print the plan and exit
+#   --warnings-fatal    fail on WARNINGs too (one reference disagrees)
 # Turning off individual tests (regular expressions on names):
 #   --templates RE      random-test templates to run (stages 4 and 4b)
 #   --exclude RE        random-test templates to skip (stages 4 and 4b)
@@ -64,9 +81,11 @@
 #   --suites LIST       riscv-arch-test suites for stage 6 (default: all)
 # Where the references are (instead of the environment variables):
 #   --alliance PATH --upstream-build DIR --arch-test DIR --cheribsd DIR
+#   --selftest-qemu PATH
 #
 # Environment (and --config) variables:
 #   ONLY, SKIP, AGAINST  as --only, --skip, --against
+#   WARNINGS_FATAL=1  as --warnings-fatal
 #   TEMPLATES, EXCLUDE   as --templates, --exclude (EXCLUDE default: none)
 #   BENCH_INCLUDE, BENCH_EXCLUDE, TRACE_EXCLUDE, UPSTREAM_SUITES  as above
 #   SEED      seed for the random tests (default: from the clock)
@@ -91,11 +110,15 @@
 #   UPSTREAM_BUILD  build directory of upstream QEMU v10.2.0 (riscv64-softmmu,
 #             --enable-plugins; stage 6)
 #   ARCH_TEST  riscv-arch-test checkout (stage 6's arch-test comparison)
+#   SELFTEST_QEMU  CHERI-QEMU 7.1 qemu-system-riscv64xcheri with RVFI-DII
+#             (stage 2b)
+#   SAIL_ONLY  where Sail alone judges (default:
+#             regressions/alliance-shares-bug.txt; empty: nowhere)
 set -u
 
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
-STAGES="policy regressions bench random coverage vote cheribsd upstream"
+STAGES="policy regressions selftest bench random coverage vote cheribsd upstream"
 
 usage() {
   sed -n 's/^# \{0,1\}//; /^Usage:/,/^Environment/p' "$0" | sed '$d' >&2
@@ -123,8 +146,10 @@ while [ $# -gt 0 ]; do
     --upstream-build) opt[UPSTREAM_BUILD]=$2; shift ;;
     --arch-test) opt[ARCH_TEST]=$2; shift ;;
     --cheribsd) opt[CHERIBSD_OUTPUT]=$2; shift ;;
+    --selftest-qemu) opt[SELFTEST_QEMU]=$2; shift ;;
     --config) config=$2; shift ;;
     --list) list_only=1 ;;
+    --warnings-fatal) opt[WARNINGS_FATAL]=1 ;;
     -h|--help) usage ;;
     -*) echo "error: unknown option $1" >&2; usage ;;
     *) positional+=("$1") ;;
@@ -162,7 +187,7 @@ stage_names() {
   local s out=
   for s in ${1//,/ }; do
     case $s in
-      1) s=policy ;; 2) s=regressions ;; 3) s=bench ;; 4) s=random ;;
+      1) s=policy ;; 2) s=regressions ;; 2b) s=selftest ;; 3) s=bench ;; 4) s=random ;;
       4b) s=vote ;; 5) s=cheribsd ;; 6) s=upstream ;;
     esac
     [[ " $STAGES " == *" $s "* ]] || { echo "error: unknown stage $s (stages: $STAGES)" >&2; exit 2; }
@@ -177,11 +202,15 @@ AGAINST=${AGAINST-}
 for ref in ${AGAINST//,/ }; do
   case $ref in
     sail) against_stages+="regressions random coverage " ;;
-    alliance) against_stages+="vote " ;;
+    alliance) against_stages+="vote selftest " ;;
     upstream) against_stages+="upstream " ;;
     *) echo "error: unknown reference $ref (sail, alliance, upstream)" >&2; exit 2 ;;
   esac
 done
+
+# Second reference for stages 2 and 4 (not with --against lacking alliance).
+second_ref=${ALLIANCE_QEMU:-}
+[ -n "$AGAINST" ] && [[ ",$AGAINST," != *,alliance,* ]] && second_ref=
 
 # Why a stage does not run ("" if it runs); "error: ..." if it was asked for
 # but cannot run.
@@ -196,6 +225,8 @@ for s in $STAGES; do
     coverage) [ -n "$templates$exclude" ] && [ $asked -eq 0 ] &&
              need="templates are selected (--only coverage to force it)" ;;
     vote) [ -n "${ALLIANCE_QEMU:-}" ] || need="ALLIANCE_QEMU / --alliance not set" ;;
+    selftest) if [ -z "${SELFTEST_QEMU:-}" ]; then need="SELFTEST_QEMU / --selftest-qemu not set"
+              elif [ -z "${ALLIANCE_QEMU:-}" ]; then need="ALLIANCE_QEMU / --alliance not set"; fi ;;
     cheribsd) [ -n "${CHERIBSD_OUTPUT:-}" ] || need="CHERIBSD_OUTPUT / --cheribsd not set" ;;
     upstream) [ -n "${UPSTREAM_BUILD:-}" ] || need="UPSTREAM_BUILD / --upstream-build not set" ;;
   esac
@@ -203,7 +234,7 @@ for s in $STAGES; do
     why[$s]="--skip"
   elif [ -n "$only" ] && [[ " $only " != *" $s "* ]]; then
     why[$s]="not in --only"
-  elif [ -n "${AGAINST-}" ] && [[ " regressions random coverage vote upstream " == *" $s "* ]] &&
+  elif [ -n "${AGAINST-}" ] && [[ " regressions selftest random coverage vote upstream " == *" $s "* ]] &&
        [[ " $against_stages " != *" $s "* ]]; then
     why[$s]="not in --against"
   elif [ -n "$need" ]; then
@@ -233,11 +264,21 @@ done
   echo "  bench tests: ${BENCH_INCLUDE:-all}${BENCH_EXCLUDE:+, excluding $BENCH_EXCLUDE}"
 [ -n "${TRACE_EXCLUDE-}" ] && echo "  traces: excluding $TRACE_EXCLUDE"
 [ -n "${UPSTREAM_SUITES-}" ] && echo "  arch-test suites: $UPSTREAM_SUITES"
+if want regressions || want random; then
+  if [ -n "$second_ref" ]; then
+    echo "  references: Sail and CHERI-Alliance QEMU (ERROR if both disagree, WARNING if one does)"
+  else
+    echo "  references: Sail only (every difference is an ERROR; --alliance adds a second)"
+  fi
+fi
+[ "${WARNINGS_FATAL:-0}" = 1 ] && echo "  warnings are fatal"
 [ $plan_error -eq 0 ] || { echo "error: a stage that was asked for cannot run" >&2; exit 2; }
 [ $list_only -eq 0 ] || exit 0
 
 [ -x "$qemu" ] || { echo "error: $qemu is not executable" >&2; exit 2; }
-if want regressions || want random || want vote; then
+if want regressions || want selftest || want random || want vote; then
+  [ -z "$second_ref" ] || [ -x "$second_ref" ] ||
+    { echo "error: $second_ref is not executable" >&2; exit 2; }
   [ -n "$qcv" ] && [ -x "$qcv" ] || { echo "error: QCVEngine not built (cabal build)" >&2; exit 2; }
 fi
 
@@ -248,6 +289,17 @@ rig() {
     ${csr_exclude:+--csr-exclude-regex "$csr_exclude"} "$@"
 }
 run() { rig --no-save "$@"; }
+sail_only=${SAIL_ONLY-$root/regressions/alliance-shares-bug.txt}
+# judge <label> <out-dir> <trace-dir> [options]: replay the traces on Sail,
+# Alliance and this QEMU and grade them (ERROR if both references disagree
+# with this QEMU). PORT= replaces this QEMU.
+judge() {
+  python3 "$here/three-way-vote.py" --port "${PORT:-$qemu}" --alliance "${second_ref:-$ALLIANCE_QEMU}" \
+    --qcvengine "$qcv" --arch "$arch" --label "$1" --out "$2" --traces "$3" "${@:4}" \
+    ${sail_only:+--sail-only "$sail_only"} ${cpu_extra:+--cpu-extra "$cpu_extra"} \
+    ${csr_exclude:+--csr-exclude-regex "$csr_exclude"} \
+    $([ "${WARNINGS_FATAL:-0}" = 1 ] && echo --warnings-fatal)
+}
 template_args=(${templates:+--test-include-regex "$templates"}
                ${exclude:+--test-exclude-regex "$exclude"})
 
@@ -286,6 +338,7 @@ expect() {
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
+warnings=$tmp/warnings
 status=0
 
 if want policy; then
@@ -337,8 +390,14 @@ if want regressions; then
       traces_in "$dir" | xargs -r ln -s -t "$replay"
       ls "$replay"/*.S >/dev/null 2>&1 || { echo "(no traces left)"; continue; }
     fi
-    # Keep going after a failure so one regression doesn't hide another.
-    run -d "$replay" --continue-on-fail || status=1
+    if [ -n "$second_ref" ]; then
+      # Every trace on all three (a pass needs both references to agree).
+      judge "REGRESSIONS $(basename "$dir")" \
+        "$save_dir/regressions-$(basename "$dir")" "$replay" --warnings-file "$warnings" || status=1
+    else
+      # Keep going after a failure so one regression doesn't hide another.
+      run -d "$replay" --continue-on-fail || status=1
+    fi
   done
 
   echo "=== Known open bugs (must still fail): regressions/open-bugs"
@@ -351,6 +410,31 @@ if want regressions; then
   done
 fi
 
+if want selftest; then
+  echo "=== Gate self-test: CHERI-QEMU 7.1 must get the expected verdicts"
+  expected=$root/utils/gate-selftest/qemu-7.1-expected.txt
+  st_dir=$save_dir/selftest
+  rm -rf "$st_dir"
+  # Every trace, whatever --trace-exclude says, so the verdicts compare.
+  PORT=$SELFTEST_QEMU judge "SELFTEST (7.1)" "$st_dir" \
+    "$root/regressions/cheri-qemu-10.2" --verdicts "$st_dir/verdicts.txt" \
+    >"$tmp/selftest.log" 2>&1
+  if [ ! -s "$st_dir/verdicts.txt" ]; then
+    echo "FAIL: the self-test gave no verdicts (see $tmp/selftest.log)"
+    cat "$tmp/selftest.log"; status=1
+  elif diff <(sed 's/#.*//; /^ *$/d; s/  *$//' "$expected" | sort) \
+            <(sort "$st_dir/verdicts.txt") >"$tmp/selftest.diff"; then
+    echo "ok: $(wc -l <"$st_dir/verdicts.txt") traces, verdicts as expected" \
+      "($(grep -c ' \(port-differs\|both-differ\|sail-only-differs\)$' "$st_dir/verdicts.txt") ERRORs on 7.1)"
+  else
+    echo "FAIL: the gate grades CHERI-QEMU 7.1 differently ('<' expected, '>' now;"
+    echo "      a new trace, or a change to the gate, Sail or Alliance):"
+    cat "$tmp/selftest.diff"
+    echo "      If intended, put the lines of $st_dir/verdicts.txt into ${expected#$root/}"
+    status=1
+  fi
+fi
+
 if want bench; then
   echo "=== QEMU-only tests"
   BENCH_INCLUDE=${BENCH_INCLUDE-} BENCH_EXCLUDE=${BENCH_EXCLUDE-} \
@@ -361,11 +445,30 @@ if want random; then
   echo "=== Random tests: $ntests per template (templates: ${templates:-all}, excluding: ${exclude:-none}, seed $seed)"
   mkdir -p "$save_dir"
   stats=$save_dir/stats-$seed.txt
+  ls "$save_dir"/failure-*.S >"$tmp/old-failures" 2>/dev/null
   rig -n "$ntests" --seed "$seed" -S "$save_dir" --continue-on-fail \
-    --stats-file "$stats" "${template_args[@]}" || status=1
-  if ls "$save_dir"/failure-*.S >/dev/null 2>&1; then
-    echo "FAIL: failing random tests saved in ${save_dir#$root/}/ (rerun with SEED=$seed)"
-    status=1
+    --stats-file "$stats" "${template_args[@]}"
+  rig_status=$?
+  if [ -z "$second_ref" ]; then
+    [ $rig_status -eq 0 ] || status=1
+    if ls "$save_dir"/failure-*.S >/dev/null 2>&1; then
+      echo "FAIL: failing random tests saved in ${save_dir#$root/}/ (rerun with SEED=$seed)"
+      status=1
+    fi
+  else
+    # This run's Sail failures, judged by Alliance as well.
+    new=$tmp/new-failures
+    mkdir -p "$new"
+    ls "$save_dir"/failure-*.S 2>/dev/null | grep -vxF -f "$tmp/old-failures" |
+      xargs -r ln -s -t "$new"
+    if ls "$new"/*.S >/dev/null 2>&1; then
+      echo "Random tests differ from Sail ($(ls "$new" | wc -l) traces); replaying on CHERI-Alliance QEMU (rerun with SEED=$seed)"
+      judge "RANDOM vs both references" "$save_dir/random-$seed-judged" "$new" \
+        --warnings-file "$warnings" || status=1
+    elif [ $rig_status -ne 0 ]; then
+      echo "FAIL: the random tests failed without saving a trace (a simulator crashed?)"
+      status=1
+    fi
   fi
 fi
 
@@ -389,7 +492,9 @@ if want vote; then
     -n "${VOTE_TESTS:-$ntests}" ${cpu_extra:+--cpu-extra "$cpu_extra"} \
     ${csr_exclude:+--csr-exclude-regex "$csr_exclude"} \
     ${templates:+--test-include-regex "$templates"} \
-    ${vote_exclude:+--test-exclude-regex "$vote_exclude"} || status=1
+    ${vote_exclude:+--test-exclude-regex "$vote_exclude"} \
+    ${sail_only:+--sail-only "$sail_only"} --warnings-file "$warnings" \
+    $([ "${WARNINGS_FATAL:-0}" = 1 ] && echo --warnings-fatal) || status=1
 fi
 
 if want cheribsd; then
@@ -411,8 +516,14 @@ if want upstream; then
   fi
 fi
 
+nwarn=0
+if [ -s "$warnings" ]; then
+  nwarn=$(wc -l <"$warnings")
+  echo "=== Warnings (one reference disagrees with this QEMU; see each stage's vote-summary.txt)"
+  cat "$warnings"
+fi
 if [ $status -eq 0 ]; then
-  echo "TESTRIG GATE: PASS"
+  if [ "$nwarn" -gt 0 ]; then echo "TESTRIG GATE: PASS ($nwarn warnings)"; else echo "TESTRIG GATE: PASS"; fi
 else
   echo "TESTRIG GATE: FAIL"
 fi

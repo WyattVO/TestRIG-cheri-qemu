@@ -1,0 +1,38 @@
+# Where CHERI-Alliance QEMU is known to be wrong, so Sail alone judges.
+#
+# three-way-vote.py (--sail-only) reads this file. For a trace listed here,
+# or whose first mismatch is on an instruction listed here, Alliance's answer
+# is ignored: any difference between this QEMU and Sail is an ERROR
+# (verdict sail-only-differs), and agreeing with Sail passes.
+#
+# Why: Alliance shares code and bugs with CHERI-QEMU 7.1, and a bug both QEMUs
+# have would otherwise be only a WARNING (sail-disagrees). The 14 traces are
+# the ones where 7.1 and Alliance agree with each other and Sail differs
+# (the 7.1 self-test, utils/gate-selftest/qemu-7.1-expected.txt); each is a
+# bug the 10.2 port fixed (regressions/README.md).
+#
+# Format: "trace <file name in regressions/*/>" or "insn <mnemonic as
+# QCVEngine prints it>", then the reason.
+
+trace 07-illegal-insn-mtval.S                  helper-raised illegal instructions leave mtval 0
+trace 09-cspecialrw-full-cap-outside-capmode.S cspecialrw returns only the address outside capability mode
+trace 11-cclear.S                              cclear not implemented (commented out of the v9 decoder)
+trace 13-ddc-bounds-wrap.S                     access wrapping past the top of a full DDC/PCC is not a length violation
+trace 14-csr-insn-xlen-in-capmode.S            v9 CSR instructions on mepc etc. access the full capability in capability mode
+trace 16-v9-scr-not-a-csr.S                    CSR instructions on ddc (0x416) / vstid (0xa80) are not illegal
+trace 18-ccopytype-reserved-otype-in-place.S   ccopytype with cd == cs1 keeps the cleared tag
+trace 19-ccseal-passthrough-untagged-sentry.S  ccseal checks the tag before passing a sealed cs through
+trace 22-mip-no-timer-pending.S                mtimecmp left at 0 after an RVFI-DII reset, so mip.MTIP reads 1
+trace 23-mccsr-write-ignored.S                 writing mccsr/uccsr faults instead of being ignored
+trace 24-uxl-read-only.S                       mstatus.UXL/sstatus.UXL writable
+trace 27-cgettop.S                             cgettop not implemented
+trace 28-sc-b-last-byte.S                      sc.b to the last byte matches the "no reservation" value (load_res == -1)
+trace 30-cap-atomics-store-permissions.S       sc.c/amoswap.c check StoreCap for untagged values, wrong register for StoreLocal
+
+insn cclear     not implemented (trace 11)
+insn cgettop    not implemented (trace 27)
+insn fpclear    not implemented (trace 31)
+insn ccopytype  in-place tag bug (trace 18)
+insn ccseal     sentry pass-through order (trace 19)
+insn sc.c       store permission checks (trace 30)
+insn amoswap.c  store permission checks (trace 30)

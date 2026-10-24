@@ -1,0 +1,44 @@
+# Gate self-test (stage 2b): the verdicts CHERI-QEMU 7.1 must get when
+# regressions/cheri-qemu-10.2 is replayed on Sail, CHERI-Alliance QEMU and
+# 7.1. 7.1 has the bugs those traces caught in the 10.2 port, so this shows
+# the gate still catches them, and how: 31 traces, 27 ERRORs, no WARNING.
+#   port-differs       7.1 alone is wrong (Sail and Alliance agree)
+#   both-differ        all three differ
+#   sail-only-differs  Alliance shares the bug (regressions/alliance-shares-bug.txt),
+#                      so Sail alone judges; without that list these would
+#                      be WARNINGs
+#   no-difference      7.1 never had the bug (it came with the 10.2 port)
+# The binary is cheri-qemu-port (7.1) with --enable-rvfi-dii; it is not
+# changed, so a difference here means the gate, Sail, Alliance or a trace
+# changed. A new trace in regressions/cheri-qemu-10.2 needs a line here.
+01-gpr-immediate-write.S port-differs
+02-store-tracing.S port-differs
+03-load-aliased-address.S port-differs
+04-misa-preserved-rvc-jump.S no-difference
+05-page-cross-lookahead.S both-differ
+06-capreg-write-cmove.S port-differs
+07-illegal-insn-mtval.S sail-only-differs
+08-reserved-scr-no-abort.S both-differ
+09-cspecialrw-full-cap-outside-capmode.S sail-only-differs
+10-cbuildcap-sealed-pattern.S both-differ
+11-cclear.S sail-only-differs
+12-compressed-insn-report.S no-difference
+13-ddc-bounds-wrap.S sail-only-differs
+14-csr-insn-xlen-in-capmode.S sail-only-differs
+15-cbuildcap-sentry-no-abort.S both-differ
+16-v9-scr-not-a-csr.S sail-only-differs
+17-sc-clears-capability-tag.S port-differs
+18-ccopytype-reserved-otype-in-place.S sail-only-differs
+19-ccseal-passthrough-untagged-sentry.S sail-only-differs
+20-csr-asr-fault-cause.S no-difference
+21-compressed-illegal-mtval.S no-difference
+22-mip-no-timer-pending.S sail-only-differs
+23-mccsr-write-ignored.S sail-only-differs
+24-uxl-read-only.S sail-only-differs
+25-fetch-page-fault.S both-differ
+26-paged-store-physical-address.S both-differ
+27-cgettop.S sail-only-differs
+28-sc-b-last-byte.S sail-only-differs
+29-sc-needs-store-permission.S port-differs
+30-cap-atomics-store-permissions.S sail-only-differs
+31-fpclear.S both-differ

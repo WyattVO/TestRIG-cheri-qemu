@@ -2,22 +2,32 @@
 """Three-way vote between the Sail CHERI-RISC-V model, CHERI-Alliance QEMU and
 the CHERI QEMU under test.
 
-Sail stays the referee for CHERI v9. CHERI-Alliance QEMU (CHERI-Alliance/qemu
-main, QEMU 7.2) is a second opinion: comparing it with the QEMU under test
-finds traces where the two QEMUs disagree, and replaying each of those on Sail
-says which QEMU is the odd one out:
+The QEMU under test is checked against two references: Sail (CHERI v9) and
+CHERI-Alliance QEMU (CHERI-Alliance/qemu main, QEMU 7.2). Every trace is
+replayed on all three pairs, and the port is judged by how many references it
+disagrees with:
 
-  port-differs     QEMU under test differs from Sail, Alliance agrees with
-                   Sail: a bug in the port (gate failure)
-  both-differ      both QEMUs differ from Sail: review against the spec
-                   (gate failure; Sail is the referee)
-  alliance-differs Alliance differs from Sail, the port agrees with Sail:
-                   an Alliance bug or a fix the port already has (reported)
-  no-difference    every pair agrees on replay (reported; a flaky trace)
+  ERROR (the vote fails): the port disagrees with both references
+    port-differs     Sail and Alliance agree; the port is the odd one out
+    both-differ      all three differ: review against the spec
+    not-replayed     a replay gave no answer (e.g. a QEMU crashed), so the
+                     port could not be cleared
+    sail-only-differs the port differs from Sail on a trace or instruction
+                     where Alliance is known to be wrong (--sail-only FILE,
+                     regressions/alliance-shares-bug.txt): Sail alone judges
+  WARNING (reported; fatal only with --warnings-fatal): one reference disagrees
+    sail-disagrees   both QEMUs agree, Sail differs: a bug the QEMUs share, or
+                     a Sail bug or allowed difference
+    alliance-differs the port agrees with Sail, Alliance differs: an Alliance
+                     bug or a fix the port already has
+  no-difference      all three agree on replay (reported; a flaky trace, or a
+                     --traces trace that passes)
+  sail-only-agrees   as sail-only-differs, but the port agrees with Sail
 
 The traces come from random QuickCheckVEngine tests of Alliance against the
-port (-n, saved with --save-dir) and/or from an existing directory (--traces).
-Traces are grouped by their first mismatching instruction and fields.
+port (-n, saved with --save-dir) and/or from an existing directory (--traces;
+the gate passes its saved regressions and the random tests' Sail failures this
+way). Traces are grouped by their first mismatching instruction and fields.
 
 Each runTestRIG.py run is killed after --timeout seconds (it, its QEMUs and
 QCVEngine), so a hung implementation cannot stall the gate; a timeout fails
@@ -27,7 +37,9 @@ the vote lists them.
 Usage: three-way-vote.py --port QEMU --alliance QEMU --out DIR
                          [-n TESTS [--seed N] [--test-include-regex RE]]
                          [--traces DIR] [--timeout SECONDS]
-Exits 1 if any trace is port-differs or both-differ, or a run timed out.
+                         [--warnings-file FILE] [--warnings-fatal]
+                         [--sail-only FILE] [--verdicts FILE]
+Exits 1 if any trace is an ERROR, or a run timed out.
 """
 import argparse
 import collections
@@ -64,6 +76,16 @@ parser.add_argument("--traces", default=None,
 # The longest vote so far (100 tests per template) took about 2 hours.
 parser.add_argument("--timeout", type=int, default=4 * 3600,
                     help="seconds before a runTestRIG.py run is killed")
+parser.add_argument("--warnings-file", default=None,
+                    help="append one line per WARNING group to this file")
+parser.add_argument("--warnings-fatal", action="store_true",
+                    help="fail on WARNINGs too")
+parser.add_argument("--sail-only", default=None,
+                    help="file of traces and instructions where Sail alone judges")
+parser.add_argument("--verdicts", default=None,
+                    help="write '<trace> <verdict>' lines to this file")
+parser.add_argument("--label", default="THREE-WAY VOTE",
+                    help="name printed with the result")
 args = parser.parse_args()
 timed_out = []
 
@@ -99,23 +121,46 @@ def run(a, b, extra, log):
 
 
 def replay(a, b, tracedir):
-    """Replay every trace in tracedir; return {file name: passed}."""
-    name = "replay-sail-vs-%s.log" % ("port" if b is PORT else "alliance")
-    out = run(a, b, ["--no-save", "--no-shrink", "-d", tracedir],
-              os.path.join(args.out, name))
-    result, current = {}, None
-    for line in out.splitlines():
-        m = re.match(r"Reading trace from (.*\.S)$", line)
-        if m:
-            current = os.path.basename(m.group(1))
-        elif current and line in ("Failure.", "No Failure."):
-            result[current] = line == "No Failure."
-            current = None
+    """Replay every trace in tracedir; return {file name: passed}.
+    A trace that kills or hangs an implementation makes QCVEngine discard the
+    rest, so the remaining traces are replayed again in a fresh run."""
+    name = "replay-%s-vs-%s" % ("sail" if a is SAIL else "alliance",
+                                "port" if b is PORT else "alliance")
+    todo = sorted(n for n in os.listdir(tracedir) if n.endswith(".S"))
+    result, attempt = {}, 0
+    while todo:
+        attempt += 1
+        d = tracedir
+        if attempt > 1:
+            d = os.path.join(args.out, "%s-%d" % (name, attempt))
+            shutil.rmtree(d, ignore_errors=True)
+            os.makedirs(d)
+            for n in todo:
+                os.symlink(os.path.abspath(os.path.join(tracedir, n)),
+                           os.path.join(d, n))
+        out = run(a, b, ["--no-save", "--no-shrink", "-d", d],
+                  os.path.join(args.out, "%s%s.log" % (
+                      name, "" if attempt == 1 else "-%d" % attempt)))
+        current, got = None, 0
+        for line in out.splitlines():
+            m = re.match(r"Reading trace from (.*\.S)$", line)
+            if m:
+                current = os.path.basename(m.group(1))
+            elif current and line in ("Failure.", "No Failure."):
+                result[current] = line == "No Failure."
+                current, got = None, got + 1
+        todo = [n for n in todo if n not in result]
+        if not got:
+            break   # no progress: leave the rest not-replayed
+        if todo:
+            print("%s stopped early; replaying the %d traces left"
+                  % (name, len(todo)))
     return result
 
 
 def signature(path):
-    """First mismatching instruction and the fields that differ."""
+    """First mismatching instruction (None if unknown) and a group name:
+    the instruction and the fields that differ."""
     insn = None
     with open(path) as f:
         for line in f:
@@ -125,8 +170,20 @@ def signature(path):
             m = re.search(r"mismatch in (.*)", line)
             if m:
                 fields = sorted(set(re.findall(r"field (\w+)", m.group(1))))
-                return "%s: %s" % (insn, ",".join(fields))
-    return "(no mismatch annotation)"
+                return insn, "%s: %s" % (insn, ",".join(fields))
+    # Saved regression traces have no annotation: one group per trace.
+    return None, os.path.basename(path)
+
+
+sail_only = {"trace": set(), "insn": set()}
+if args.sail_only:
+    with open(args.sail_only) as f:
+        for line in f:
+            words = line.split("#")[0].split()
+            if words:
+                if words[0] not in sail_only or len(words) < 2:
+                    sys.exit("%s: bad line: %s" % (args.sail_only, line.strip()))
+                sail_only[words[0]].add(words[1])
 
 
 SAIL = ("sail", None, None)
@@ -152,7 +209,7 @@ if args.number_of_tests:
         # (A killed QCVEngine may not have flushed it, hence the timeout case.)
         print("Alliance against the port: the random tests did not run "
               "(see alliance-vs-port.log)")
-        print("THREE-WAY VOTE: FAIL (random tests did not run)")
+        print("%s: FAIL (random tests did not run)" % args.label)
         sys.exit(1)
     print("Alliance against the port: %d disagreements saved (seed %s)"
           % (len(os.listdir(traces)), seed.group(1) if seed else "?"))
@@ -167,44 +224,69 @@ if args.traces:
 
 if not any(n.endswith(".S") for n in os.listdir(traces)):
     if timed_out:
-        print("THREE-WAY VOTE: FAIL (timed out)")
+        print("%s: FAIL (timed out)" % args.label)
         sys.exit(1)
-    print("THREE-WAY VOTE: PASS (no traces where the QEMUs disagree)")
+    print("%s: PASS (no traces where the QEMUs disagree)" % args.label)
     sys.exit(0)
 
 port_ok = replay(SAIL, PORT, traces)
 alliance_ok = replay(SAIL, ALLIANCE, traces)
+qemus_agree = replay(ALLIANCE, PORT, traces)
 groups = collections.defaultdict(list)
+verdicts = []
 for name in sorted(n for n in os.listdir(traces) if n.endswith(".S")):
-    p, a = port_ok.get(name), alliance_ok.get(name)
-    if p is None or a is None:
+    p, a, q = port_ok.get(name), alliance_ok.get(name), qemus_agree.get(name)
+    insn, sig = signature(os.path.join(traces, name))
+    if name in sail_only["trace"] or insn in sail_only["insn"]:
+        verdict = ("not-replayed" if p is None else
+                   "sail-only-agrees" if p else "sail-only-differs")
+    elif p is None or q is None:
         verdict = "not-replayed"
-    elif p and not a:
-        verdict = "alliance-differs"
-    elif a and not p:
-        verdict = "port-differs"
-    elif not p:
-        verdict = "both-differ"
-    else:
+    elif p and q:
         verdict = "no-difference"
-    groups[(verdict, signature(os.path.join(traces, name)))].append(name)
+    elif p:
+        verdict = "alliance-differs"
+    elif q:
+        verdict = "sail-disagrees"
+    elif a is None:
+        verdict = "not-replayed"
+    elif a:
+        verdict = "port-differs"
+    else:
+        verdict = "both-differ"
+    groups[(verdict, sig)].append(name)
+    verdicts.append("%s %s" % (name, verdict))
+if args.verdicts:
+    with open(args.verdicts, "w") as f:
+        f.write("".join(v + "\n" for v in verdicts))
 
-order = ["port-differs", "both-differ", "not-replayed", "alliance-differs",
-         "no-difference"]
-lines = []
+ERRORS = ("port-differs", "both-differ", "sail-only-differs", "not-replayed")
+WARNINGS = ("sail-disagrees", "alliance-differs")
+order = ERRORS + WARNINGS + ("sail-only-agrees", "no-difference")
+lines, warnings = [], []
 for verdict in order:
+    level = ("ERROR" if verdict in ERRORS else
+             "WARNING" if verdict in WARNINGS else "ok")
     for (v, sig), names in sorted(groups.items()):
         if v == verdict:
-            lines.append("%-16s %4d  %s  (e.g. traces/%s)"
-                         % (v, len(names), sig, names[0]))
+            line = "%-7s %-16s %4d  %s  (e.g. %s)" % (
+                level, v, len(names), sig, os.path.join(traces, names[0]))
+            lines.append(line)
+            if level == "WARNING":
+                warnings.append(line)
 summary = "\n".join(lines)
 with open(os.path.join(args.out, "vote-summary.txt"), "w") as f:
     f.write(summary + "\n")
 print(summary)
-failed = any(v in ("port-differs", "both-differ", "not-replayed")
-             for v, _ in groups)
+if args.warnings_file and warnings:
+    with open(args.warnings_file, "a") as f:
+        f.write("".join("%s: %s\n" % (args.label, w) for w in warnings))
+failed = any(v in ERRORS for v, _ in groups)
+if args.warnings_fatal and warnings:
+    failed = True
 if timed_out:
     print("Timed out: %s" % ", ".join(timed_out))
     failed = True
-print("THREE-WAY VOTE: %s" % ("FAIL" if failed else "PASS"))
+print("%s: %s%s" % (args.label, "FAIL" if failed else "PASS",
+                    " (%d warning groups)" % len(warnings) if warnings else ""))
 sys.exit(1 if failed else 0)
