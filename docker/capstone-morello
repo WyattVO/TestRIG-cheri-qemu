@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Run the Morello generated tests (rems-project/morello-generated-tests) on a
+# Morello QEMU with the tests/morello pytest harness of the 10.2 port.
+#
+# Usage: capstone-morello [qemu-system-morello] [pytest options]
+#   Without a QEMU it tests the port's build-morello in the image.
+#   The 10.2 baseline is 3393 passed, 2 skipped.
+set -u
+C=$HOME/Projects/CAPSTONE
+qemu=$C/cheri-qemu-AI/cheri-qemu-10.2/build-morello/qemu-system-morello
+if [ $# -gt 0 ] && [ "${1#-}" = "$1" ]; then qemu=$(realpath "$1"); shift; fi
+cd "$C/cheri-qemu-AI/cheri-qemu-10.2/tests/morello"
+exec "$C/.venv/bin/python" -m pytest --numprocesses="$(nproc)" \
+  --morello-tests-dir="$C/refs/morello-generated-tests" --qemu="$qemu" "$@"

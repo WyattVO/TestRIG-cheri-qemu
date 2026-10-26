@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Run the TestRIG gate in the container with every reference (full.conf).
+#
+# Usage: capstone-gate [gate options] [qemu-system-riscv64xcheri] [tests-per-template]
+#   Without a QEMU it tests the CHERI QEMU 10.2 port built into the image, at
+#   100 tests per template. The options are testrig-gate.sh's (--help).
+#   CheriBSD (stage 5) is skipped unless a cheribuild output directory is
+#   mounted at ~/Projects/CAPSTONE/cheri/output.
+#   Logs and failing tests go to the current directory (mount one at
+#   ~/results, the default working directory).
+set -u
+C=$HOME/Projects/CAPSTONE
+gate=$C/TestRig-AI/TestRIG-cheri-qemu
+
+args=() npos=0 skip=
+while [ $# -gt 0 ]; do
+  case $1 in
+    --list|--warnings-fatal|-h|--help) args+=("$1") ;;
+    --skip) skip=$2; shift ;;
+    --*) args+=("$1" "$2"); shift ;;
+    *) args+=("$1"); npos=$((npos + 1)) ;;
+  esac
+  shift
+done
+if [ ! -e "$C/cheri/output/cheribsd-riscv64-purecap.img" ]; then
+  echo "(no CheriBSD image mounted at $C/cheri/output: skipping stage 5)"
+  skip=${skip:+$skip,}cheribsd
+fi
+[ -n "$skip" ] && args=(--skip "$skip" "${args[@]}")
+[ $npos -eq 0 ] && args+=("$C/cheri-qemu-AI/cheri-qemu-10.2/build/qemu-system-riscv64xcheri" 100)
+
+export SAVE_DIR=${SAVE_DIR:-$PWD/random-failures}
+exec "$gate/utils/scripts/testrig-gate.sh" --config "$gate/utils/gate-profiles/full.conf" "${args[@]}"

@@ -130,6 +130,10 @@ depend on the previous test. Apply it before building (step 3).
 
 ## Running it on your machine
 
+To skip the steps below, use the container in [docker/](docker/README.md).
+It holds the 10.2 port and every reference (all but CheriBSD), built from
+the baseline commits, and runs the gate with `capstone-gate`.
+
 Tested on Ubuntu 26.04 with GCC 15 and Python 3.14, without root (GHC, opam
 and z3 installed per user). You need the QEMU under test, QuickCheckVEngine,
 the Sail CHERI-RISC-V emulator, optionally a RISC-V cross compiler, and
