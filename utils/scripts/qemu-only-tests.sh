@@ -7,7 +7,9 @@
 # an unexpected trap). A "# QEMU_CPU: <cpu>" line selects the -cpu value
 # (default rv64) and "# QEMU_SMP: <n>" the number of harts (default 1; the
 # harts run round-robin, QEMU's default for CHERI), "# QEMU_ARGS: <args>" adds
-# QEMU options (e.g. devices). A "# XFAIL: <reason>" line marks a known failure: it is
+# QEMU options (e.g. devices). "# QEMU_VERSION: >=<x.y>" runs the test only on
+# QEMU x.y or later (for extensions a QEMU rebase added; older QEMUs report it
+# as skipped). A "# XFAIL: <reason>" line marks a known failure: it is
 # reported but does not fail the run, and passing is reported as XPASS (then
 # remove the line).
 #
@@ -25,6 +27,8 @@ qemu=${1:?usage: $0 <qemu-system-riscv64xcheri>}
 cc=${CROSS_CC:-riscv64-linux-gnu-gcc}
 
 command -v "$cc" >/dev/null || { echo "error: $cc not found (set CROSS_CC)" >&2; exit 2; }
+# e.g. "11.0.0" from "QEMU emulator version 11.0.0 (v11.0.0-...)"
+qemu_version=$("$qemu" --version | sed -n 's/^QEMU emulator version \([0-9.]*\).*/\1/p')
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
@@ -40,6 +44,12 @@ for src in "$dir"/*.S; do
   xfail=$(sed -n 's/^# XFAIL: *//p' "$src" | head -1)
   smp=$(sed -n 's/^# QEMU_SMP: *//p' "$src" | head -1)
   args=$(sed -n 's/^# QEMU_ARGS: *//p' "$src" | head -1)
+  min=$(sed -n 's/^# QEMU_VERSION: *>= *//p' "$src" | head -1)
+  if [ -n "$min" ] &&
+     [ "$(printf '%s\n' "$min" "$qemu_version" | sort -V | head -1)" != "$min" ]; then
+    echo "skipped: $name (needs QEMU $min or later, this is $qemu_version)"
+    continue
+  fi
   if ! "$cc" -march=rv64gc -mabi=lp64 -nostdlib -nostartfiles -static \
       -I "$dir" -T "$dir/link.ld" -o "$tmp/$name.elf" "$src"; then
     echo "FAIL: $name does not assemble"; status=1; continue

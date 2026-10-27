@@ -17,6 +17,7 @@ Usage: cheri-ext-review.py <qemu-system-riscv64xcheri>
 """
 import json
 import os
+import re
 import subprocess as sub
 import sys
 
@@ -25,16 +26,38 @@ LIST = os.path.join(HERE, "..", "..", "regressions", "cheri-extensions.txt")
 STATUSES = ("allowed", "refused")
 
 
-def read_list():
+def version_tuple(text):
+    return tuple(int(x) for x in text.split("."))
+
+
+def qemu_version(qemu):
+    out = sub.run([qemu, "--version"], capture_output=True, text=True,
+                  timeout=30).stdout
+    m = re.match(r"QEMU emulator version ([0-9.]+)", out)
+    if not m:
+        sys.exit("error: could not read the version of " + qemu)
+    return version_tuple(m.group(1))
+
+
+def read_list(version):
+    """Extensions listed for this QEMU version (an entry with ">=x.y" only
+    applies from QEMU x.y on: it was added by that QEMU release)."""
     exts = {}
     with open(LIST) as f:
         for n, line in enumerate(f, 1):
             line = line.split("#", 1)[0].strip()
             if not line:
                 continue
-            name, status = line.split()[:2]
+            fields = line.split()
+            name, status = fields[:2]
             if status not in STATUSES:
                 sys.exit("%s:%d: unknown status %r" % (LIST, n, status))
+            if len(fields) > 2:
+                if not fields[2].startswith(">="):
+                    sys.exit("%s:%d: expected >=<version>, got %r" %
+                             (LIST, n, fields[2]))
+                if version < version_tuple(fields[2][2:]):
+                    continue
             exts[name] = status
     return exts
 
@@ -75,7 +98,7 @@ def main():
         sys.exit(__doc__)
     qemu = sys.argv[1]
     status = 0
-    listed = read_list()
+    listed = read_list(qemu_version(qemu))
     props = qemu_ext_props(qemu)
 
     for name in sorted(props - set(listed)):

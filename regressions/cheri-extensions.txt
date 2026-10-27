@@ -1,7 +1,10 @@
 # CHERI review of every RISC-V extension property the QEMU under test offers
 # (checked by utils/scripts/cheri-ext-review.py, gate stage 1).
 #
-#   <property> allowed|refused   # why, and which test covers it
+#   <property> allowed|refused [>=<version>]   # why, and which test covers it
+#
+# ">=11.0": the extension was added by QEMU 11.0; older QEMUs don't offer it,
+# and the entry only applies from that version on.
 #
 # "refused": the CHERI extension policy must refuse it (it bypasses
 # capability checks). "allowed": accepted on CHERI CPUs. An extension that
@@ -29,6 +32,7 @@ zabha           allowed   # qemu-only amocas-wdb-clears-tag
 zama16b         allowed   # misaligned-atomicity guarantee only
 zawrs           allowed   # wrs.nto/wrs.sto: no memory access; qemu-only ext-functional
 ztso            allowed   # memory ordering only
+zalasr          allowed >=11.0  # integer mode through DDC, reserved in capability mode: qemu-only zalasr-cheri
 
 # Compressed
 zca             allowed   # random tests vs Sail
@@ -39,6 +43,7 @@ zcf             allowed   # RV32 only
 zcmop           allowed   # qemu-only ext-functional
 zcmp            allowed   # push/pop: compiled out on CHERI (illegal instruction)
 zcmt            refused   # jump table reads not checked against PCC/DDC
+zclsd           refused >=11.0  # RV32 register-pair loads/stores, not checked against DDC
 
 # Bit manipulation, crypto, integer, FP (no memory access of their own)
 zba             allowed
@@ -75,6 +80,7 @@ zhinxmin        allowed
 # Base ISA pieces and counters
 zicsr           allowed
 zifencei        allowed
+zilsd           refused >=11.0  # RV32 register-pair loads/stores, not checked against DDC
 zicntr          allowed   # counters: not comparable with Sail; qemu-only ext-functional
 zihpm           allowed
 ziccrse         allowed
@@ -97,6 +103,7 @@ ssctr           allowed
 smdbltrp        allowed
 ssdbltrp        allowed
 smepmp          allowed
+smpmpmt         allowed >=11.0  # pmpcfg memory-type bits, stored only: qemu-only ext-functional-11
 smstateen       allowed
 ssstateen       allowed
 ssccfg          allowed
@@ -159,4 +166,7 @@ xtheadmac       allowed
 xtheadmemidx    allowed   # qemu-only xthead-mem-cheri
 xtheadmempair   allowed   # qemu-only xthead-mem-cheri
 xtheadsync      allowed
+xmipscbop       allowed >=11.0  # mips.pref is a no-op: qemu-only ext-functional-11
+xmipscmov       allowed >=11.0  # register-only conditional move: qemu-only ext-functional-11
+xmipslsp        refused >=11.0  # pair loads/stores, no capability-mode definition
 xventanacondops allowed
