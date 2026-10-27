@@ -1,11 +1,12 @@
 # QEMU_CPU: rv64,svadu=true
-# XFAIL: QEMU 10.2 updates PTEs without a PMP check; fixed upstream in QEMU 11 (fa2cf74883)
+# XFAIL: QEMU 10.2 and 11.0.0 update PTEs without a PMP check; fixed upstream after v11.0.0 (fa2cf74883)
 # With Svadu (menvcfg.ADUE) the page walker sets PTE bits itself; on CHERI v9
 # the first tagged capability store to a CW = 1, CD = 0 page also sets CD.
 # That PTE write is a supervisor store and must pass PMP: if the page table
 # is read-only to S-mode, the capability store must raise a store access
-# fault (cause 7) and leave CD clear. QEMU 11 adds this check ("Check PMP
-# before updating PTE"); the rebase must keep it on the path that sets CD.
+# fault (cause 7) and leave CD clear. Upstream adds this check after v11.0.0
+# ("Check PMP before updating PTE"); a rebase onto a QEMU with it must keep it
+# on the path that sets CD.
 #
 # Sv39 gigapages: VPN2 0 -> test device, VPN2 2 -> RAM (all bits set),
 # VPN2 3 -> RAM with CW = CR = 1, A = D = 1, CD = 0.

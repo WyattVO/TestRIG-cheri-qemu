@@ -65,13 +65,15 @@ was an upstream bug.
 | MMU | CHERI PTE bits are not reserved bits | `pte-cheri-bits-not-reserved` | Svpbmt/Svnapot-style reserved-bit checks faulting normal CHERI mappings |
 | MMU | CW, CR, CD, CRM, CRG enforcement | `pte-cw-capability-store`, `pte-cr-cd-tlb-flags`, `pte-crg-load-generation` | capability store/load rules ignored (CheriBSD revocation) |
 | MMU | TLB flushes of CHERI bits | `pte-cheri-bits-flush`, `pte-cr-cd-tlb-flags` | stale CHERI bits after `sfence.vma`/Svinval |
-| MMU | PTE updates honour PMP | `pte-cd-update-pmp` (XFAIL on 10.2) | the walker setting CD through a read-only page table |
+| MMU | PTE updates honour PMP | `pte-cd-update-pmp` (XFAIL on 10.2 and 11.0) | the walker setting CD through a read-only page table |
 | PMP | 16-byte capability accesses | `pmp-capability-access` | half of a capability access escaping PMP |
 | Config | Extension policy and review | gate stage 1, `cheri-extensions.txt` | an unreviewed or unsafe extension enabled on a CHERI CPU |
 | Config | Refused extensions are really off | `disabled-ext-inert` (on `-cpu max`) | a refused extension still decoded, or its CSR bits still writable |
 | Debug | Sdtrig triggers | `debug-trigger-cheri` | data triggers missing capability loads/stores; execute triggers in capability mode losing PCC |
 | Config | Fixed formats | `uxl-read-only`, `data-endianness-fixed` | RV32 or big-endian state changing the capability format |
 | 10.2 extensions | Functional results | `ext-functional` | a port breaking Zicond, Zfh, Zfa, Zcb, Zbkb, Zimop, Zawrs, Sstc, Zicbop, Zicntr |
+| 11.0 extensions | Zalasr under CHERI | `zalasr-cheri` (QEMU 11.0+) | load-acquire/store-release bypassing DDC bounds or Store permission, keeping tags, being usable in capability mode, or a load into x0 changing x0 (upstream QEMU 11.0.0 bug, fixed in the port) |
+| 11.0 extensions | Functional results | `ext-functional-11` (QEMU 11.0+) | a port breaking XMIPSCMOV (or leaving a tag on its result), XMIPSCBOP prefetches faulting, or Smpmpmt's memory-type bits changing PMP permissions |
 | System | Whole OS | stage 5: `cheribsdtest` purecap and hybrid, `CHERIBSD_SMP=N` for SMP | anything above, end to end |
 
 ## How each test was proven to work
