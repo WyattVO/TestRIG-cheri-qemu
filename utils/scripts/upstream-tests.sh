@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Run upstream QEMU's own RISC-V tests against the CHERI QEMU port.
 #
-# The tests come from an unmodified upstream QEMU build (v10.2.0, configured
+# The tests come from an unmodified upstream QEMU build (the release the port
+# is based on, v10.2.0 or v11.0.0, configured
 # with --cross-prefix-riscv64 and built with "make check-tcg"), so they are
 # upstream's expectations, not the port's copy of them:
 #   1. tests/tcg/riscv64 system tests (check-tcg): each must exit 0 on the

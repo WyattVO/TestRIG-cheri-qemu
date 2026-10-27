@@ -107,8 +107,9 @@
 #             (stage 4b)
 #   VOTE_TESTS  random tests per template in stage 4b (default: tests-per-template)
 #   VOTE_EXCLUDE  as --vote-exclude (default: none)
-#   UPSTREAM_BUILD  build directory of upstream QEMU v10.2.0 (riscv64-softmmu,
-#             --enable-plugins; stage 6)
+#   UPSTREAM_BUILD  build directory of the upstream QEMU release the port is
+#             based on, v10.2.0 or v11.0.0 (riscv64-softmmu, --enable-plugins,
+#             "make check-tcg" run; stage 6)
 #   ARCH_TEST  riscv-arch-test checkout (stage 6's arch-test comparison)
 #   SELFTEST_QEMU  CHERI-QEMU 7.1 qemu-system-riscv64xcheri with RVFI-DII
 #             (stage 2b)
