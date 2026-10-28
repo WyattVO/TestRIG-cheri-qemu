@@ -108,7 +108,11 @@ def read_expected():
 def run_qemu(qemu, elf, cpu, base):
     plugin = os.path.join(os.path.dirname(qemu), "contrib", "plugins", "libexeclog.so")
     plugin += "".join(",reg=" + r for r in REGS)
-    cmd = [qemu, "-M", "virt", "-cpu", cpu, "-bios", "none", "-kernel", elf,
+    # thread=single: under MTTCG the plugin reads its registers before the
+    # vCPU is reset, when a CHERI PCC has no ASR permission and the CSR
+    # reads fail (execlog then asserts). The tests use one hart either way.
+    cmd = [qemu, "-M", "virt", "-accel", "tcg,thread=single", "-cpu", cpu,
+           "-bios", "none", "-kernel", elf,
            "-display", "none", "-monitor", "none", "-serial", "file:" + base + ".sig",
            "-plugin", plugin, "-d", "plugin", "-D", base + ".trace"]
     try:
