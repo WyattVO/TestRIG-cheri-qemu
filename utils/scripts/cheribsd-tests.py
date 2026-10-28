@@ -76,7 +76,7 @@ def main():
                    help="console log (default: %(default)s)")
     p.add_argument("--smp", type=int, default=1,
                    help="number of harts (default: %(default)s; QEMU runs them "
-                   "round-robin, its default for CHERI)")
+                   "with MTTCG if it supports MTTCG for CHERI, else round-robin)")
     p.add_argument("--suite", action="append",
                    help="cheribsdtest binary to run (default: purecap and hybrid)")
     args = p.parse_args()

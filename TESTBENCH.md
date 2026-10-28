@@ -55,7 +55,8 @@ was an upstream bug.
 | 10.2 extensions | `amocas` with rd = x0 | `amocas-rd-x0` | the old memory value leaking into later uses of x0 (upstream QEMU bug; the port's CHERI cmpxchg avoided it by luck, fixed properly 2026-10-22) |
 | CHERI instructions | `fpclear` register clearing | `fpclear-registers`, trace 31 | `fpclear` missing, trapping with the FPU on, clearing the wrong registers, writing a NaN-boxed instead of a full zero, or getting `mstatus.FS` wrong |
 | Tags | Cache-block zero | `cbo-zero-cheri` | `cbo.zero` keeping tags |
-| Tags | Two harts | `smp-tag-consistency` | a torn capability (tag on another hart's plain data) |
+| Tags | Two harts, round-robin and MTTCG | `smp-tag-consistency`, `smp-tag-atomics` | a torn capability (tag on another hart's plain data, `amoswap.d` or `cbo.zero` result) |
+| Tags | MTTCG tag store (lock_tag) | `tags-concurrent-mode` | a store, AMO, LR/SC, CAS or `cbo.zero` path that skips the tag lock or keeps a tag; CLoadTags reading the lock bytes in the wrong order |
 | Permissions | Store-conditional needs Store | `sc-store-permission`, traces 29, 30 | SC/`sc.c`/`amoswap.c` checking the wrong permission |
 | Permissions | DDC and capability authority for extension instructions | `ext-mem-insns-cheri`, `ext-mem-insns-capmode`, `xthead-mem-cheri`, `cbo-zero-cheri`, `cbo-inval-bounds` | an extension's load/store bypassing bounds or Store permission, in integer or capability mode |
 | Permissions | ASR | `asr-permission`, trace 20 | privileged CSRs/SCRs, `mret`, `cbo.inval` usable without ASR |
@@ -74,7 +75,7 @@ was an upstream bug.
 | 10.2 extensions | Functional results | `ext-functional` | a port breaking Zicond, Zfh, Zfa, Zcb, Zbkb, Zimop, Zawrs, Sstc, Zicbop, Zicntr |
 | 11.0 extensions | Zalasr under CHERI | `zalasr-cheri` (QEMU 11.0+) | load-acquire/store-release bypassing DDC bounds or Store permission, keeping tags, being usable in capability mode, or a load into x0 changing x0 (upstream QEMU 11.0.0 bug, fixed in the port) |
 | 11.0 extensions | Functional results | `ext-functional-11` (QEMU 11.0+) | a port breaking XMIPSCMOV (or leaving a tag on its result), XMIPSCBOP prefetches faulting, or Smpmpmt's memory-type bits changing PMP permissions |
-| System | Whole OS | stage 5: `cheribsdtest` purecap and hybrid, `CHERIBSD_SMP=N` for SMP | anything above, end to end |
+| System | Whole OS | stage 5: `cheribsdtest` purecap and hybrid, `CHERIBSD_SMP=N` for SMP (`full-mttcg.conf`: 4 harts on 4 host threads) | anything above, end to end; under MTTCG, the page walker's A/D/CD updates and the revoker's CLoadTags |
 
 ## How each test was proven to work
 
@@ -89,7 +90,11 @@ against a QEMU where the behaviour it checks is broken, and failed:
 - a wrong expected value in a copy of the test (e.g. `ext-functional`,
   `tag-clear-store-widths`, `dma-clears-tags`, `cheri-fault-delegation`)
   fails at exactly that check;
-- `smp-tag-consistency` fails under MTTCG, where CHERI tags are known to tear;
+- `smp-tag-consistency` and `smp-tag-atomics` fail under forced MTTCG on
+  10.2 without the lock_tag series, where CHERI tags tear (`smp-tag-atomics`
+  with `cbo.zero` aborts there; without it, check 1 fails);
+- `tags-concurrent-mode` fails check 1 with the series' big-endian lock-byte
+  read put back (2026-10-28), and check 6 on 10.2 without the series;
 - `amocas-rd-x0` fails on upstream QEMU 10.2, which has the bug: each of its
   five checks alone exits with its own number there.
 
@@ -123,8 +128,10 @@ against a QEMU where the behaviour it checks is broken, and failed:
   `lr.c.cap` is not generated while the Sail model mishandles it
   (`regressions/coverage-required.txt` lists every coverage gap).
 
-- MTTCG: CHERI tags are not thread-safe across host threads; use the default
-  round-robin TCG for SMP (QEMU warns otherwise).
+- MTTCG (lock_tag branch): no bare-metal test races the page walker's
+  A/D/CD update against a capability store (CheriBSD on 4 harts covers it);
+  device DMA writes and their tag clears are still not atomic with respect
+  to a hart (as before the series); Morello has no MTTCG.
 - `riscv64cheristd` (CHERI 0.9.3 standard) has no bench or CheriBSD run.
 - Vector and hypervisor are refused on CHERI; `disabled-ext-inert` checks they
   stay off. Testing them for real needs a CHERI-aware implementation first.
@@ -134,4 +141,5 @@ against a QEMU where the behaviour it checks is broken, and failed:
 - `riscv64cheristd` (CHERI 0.9.3 standard): the bench uses v9 encodings and
   v9 semantics; a 0.9.3 bench would need its own `cheri-std.h` and a
   CheriBSD built for it.
-- MTTCG: not a test gap but a design limit of CHERI tags (see SMP above).
+- MTTCG on QEMU without the lock_tag series: not a test gap but a design
+  limit of its CHERI tags (see `regressions/README.md`, SMP and MTTCG).

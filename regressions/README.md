@@ -115,7 +115,9 @@ cannot compare them. CHERI instructions are written with `.insn` (see
 | `fpclear-registers.S` | `fpclear` traps with FS = Off, zeroes exactly the selected registers to an FLEN-wide 0 (not NaN-boxed), sets FS to Dirty, and leaves FS alone for an empty mask |
 | `amocas-rd-x0.S` | An `amocas.w/.d/.b/.h/.q` with rd = x0 leaves x0 zero for the rest of the translation block. Upstream QEMU 10.2 and 11.x gave the shared constant-zero temporary to the cmpxchg as its result, so a later `sd x0` stored the old memory value (found by the upstream diff, gate stage 6). Fails on upstream, passes on the port |
 | `pte-cw-capability-store.S` | Sv39 in S-mode: a tagged capability store to a page with CW clear raises cause 27, an untagged one succeeds, CW set keeps the tag. Sail never enforces CW |
-| `smp-tag-consistency.S` | Two harts (`# QEMU_SMP: 2`): while hart 1 alternately stores a capability and plain data into a slot, every tagged capability hart 0 loads from it is hart 1's capability (never a tag on plain data); a plain store from one hart clears the tag of a capability another hart stored |
+| `smp-tag-consistency.S` | Two harts (`# QEMU_SMP: 2`), round-robin and MTTCG: while hart 1 alternately stores a capability and plain data into a slot, every tagged capability hart 0 loads from it is hart 1's capability (never a tag on plain data); a plain store from one hart clears the tag of a capability another hart stored |
+| `smp-tag-atomics.S` | The same race with `amoswap.d` and `cbo.zero` overwriting the capability, round-robin and MTTCG. CHERI-QEMU 10.2 without the lock_tag series, forced into MTTCG, fails check 1 with `amoswap.d` and aborts in `cbo.zero` |
+| `tags-concurrent-mode.S` | One hart with `-smp 1,maxcpus=4`, which under MTTCG switches QEMU to its concurrent tag store (a lock byte per capability): capability stores and loads, `sd`, `amoswap.d`, `lr.d`/`sc.d`, `amocas.d`, `amoadd.w` and `cbo.zero` keep or clear exactly the right tags, checked with CLoadTags. The lock_tag series as published read the lock bytes in big-endian order (check 1 fails: CLoadTags gives 0b1010 for 0b0101), which broke CheriBSD's revoker under MTTCG; 10.2 without the series, forced into MTTCG, fails check 6 (`sc.d` keeps the tag) |
 | `tag-clear-store-widths.S` | Every store width and kind (sb/sh/sw/sd, fsw/fsd, c.sw/c.sd) clears the tag of exactly the capability it writes into; misaligned stores crossing two capabilities clear both; loads and stores outside a capability leave it tagged |
 | `uxl-read-only.S` | `mstatus`/`sstatus` UXL stays RV64 |
 | `pte-crg-load-generation.S` | A tagged capability load from a CR+CRM page whose CRG differs from `sccsr.SGCLG` raises cause 26, also after the page is in the TLB; untagged and matching-generation loads do not (CheriBSD load-side revocation) |
@@ -143,21 +145,32 @@ cannot compare them. CHERI instructions are written with `.insn` (see
 | `pcc-bounds-cached-tb.S` | Code first translated under the full PCC still has its fetches checked when later run under a PCC covering one instruction (PCC bounds are part of QEMU's translation cache key) |
 | `data-endianness-fixed.S` | `mstatus` MBE/SBE/UBE stay 0 and data accesses stay little-endian (one capability memory format) |
 
-A `# QEMU_SMP: <n>` line runs a test with n harts, and `# QEMU_ARGS: <args>` adds QEMU options (devices). A `# QEMU_VERSION: >=<x.y>` line runs a test only on QEMU x.y or later (older QEMUs report it as skipped), for extensions a newer QEMU added. A `# XFAIL: <reason>` line marks a test that is known to fail; it is
+A `# QEMU_SMP: <n>` line gives the `-smp` value, and `# QEMU_ARGS: <args>` adds QEMU options (devices). `# QEMU_THREADS: single multi` runs a test under round-robin TCG and under MTTCG (reported as `name[single]`, `name[multi]`); on a QEMU without MTTCG for CHERI (it warns "Guest not yet converted to MTTCG") the multi run is skipped, or fails with `BENCH_MTTCG=require` (`full-mttcg.conf`). A `# QEMU_VERSION: >=<x.y>` line runs a test only on QEMU x.y or later (older QEMUs report it as skipped), for extensions a newer QEMU added. A `# XFAIL: <reason>` line marks a test that is known to fail; it is
 reported as `xfail` and does not fail the gate (`XPASS` when it starts
 passing). `cheri-v9.h` has shared macros for these tests, including an
 expected-trap handler (`check`, `trap_expect`, `expected_trap_handler`).
 
 ### SMP and MTTCG
 
-QEMU runs CHERI harts round-robin on one host thread by default (it does not
-enable MTTCG for CHERI targets). With `-accel tcg,thread=multi`, QEMU warns
+CHERI-QEMU 10.2 runs CHERI harts round-robin on one host thread (it does
+not enable MTTCG for CHERI targets). With `-accel tcg,thread=multi`, it warns
 that CHERI tags are not thread-safe, and that is real:
 `smp-tag-consistency.S` then fails check 1 every time (hart 0 loads a tagged
-capability made of hart 1's plain data, i.e. a forged capability), and any
-`cbo.zero` aborts QEMU (an assertion in `do_cbo_zero`). Never run CHERI
-guests with MTTCG. `cheribsd-tests.py --smp N` boots CheriBSD with N harts
-(round-robin) for the kernel's SMP paths.
+capability made of hart 1's plain data, i.e. a forged capability),
+`smp-tag-atomics.S` too, `tags-concurrent-mode.S` fails check 6, and any
+`cbo.zero` aborts QEMU (an assertion in `do_cbo_zero`).
+
+The port with CHERI-Alliance's lock_tag series (branch `cheri-10.2-mttcg`)
+enables MTTCG for CHERI-RISC-V: with more than one possible hart
+(`max_cpus > 1`) every tag sits in a lock byte that generated code holds
+across each store, AMO and compare-and-swap. The three tests above run under
+both TCG modes there, and `utils/gate-profiles/full-mttcg.conf` requires the
+MTTCG runs (`BENCH_MTTCG=require`) and boots CheriBSD with four harts
+(`CHERIBSD_SMP=4`). `cheribsd-tests.py --smp N` boots CheriBSD with N harts
+for the kernel's SMP paths (on that branch, N host threads). The plugin
+comparison (`upstream-diff.py`) runs with `thread=single`: under MTTCG the
+execlog plugin reads CSRs before reset, when the CHERI PCC has no ASR, and
+asserts.
 
 Each new test was checked against a deliberately broken QEMU (2026-10-19):
 `cbo.zero` without tag invalidation fails `cbo-zero-cheri` check 1, and
