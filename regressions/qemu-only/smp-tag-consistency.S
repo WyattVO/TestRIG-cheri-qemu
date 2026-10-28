@@ -1,5 +1,6 @@
 # QEMU_CPU: rv64
 # QEMU_SMP: 2
+# QEMU_THREADS: single multi
 # Two harts share a 16-byte slot. Hart 1 keeps storing a tagged capability
 # with address MAGIC into it, then plain data over it (which must clear the
 # tag). Hart 0 keeps loading the slot as a capability:
@@ -10,8 +11,9 @@
 #     with round-robin TCG this takes a few time slices).
 #  3: after hart 1 stops, an ordinary store by hart 0 clears the tag of a
 #     capability hart 1 stored (tags are per memory location, not per hart).
-# CHERI tags are not thread-safe with MTTCG (QEMU warns), so this runs the
-# default round-robin TCG; it also guards against that default changing.
+# It runs under round-robin TCG and under MTTCG, where the harts really run
+# at once: a QEMU without the lock_tag series fails check 1 there every time
+# (CHERI-QEMU 10.2 before it, forced with thread=multi).
 #include "cheri-v9.h"
 
 #define MAGIC   0x5a5a00c0ffee0000

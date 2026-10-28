@@ -99,9 +99,12 @@
 #             which the Sail model always implements)
 #   QCVENGINE path to the QCVEngine binary (default: newest cabal build)
 #   CROSS_CC  RISC-V cross compiler for the bench tests
+#   BENCH_MTTCG  "require": fail the bench tests' MTTCG runs on a QEMU without
+#             MTTCG for CHERI instead of skipping them (full-mttcg.conf)
 #   CHERIBSD_OUTPUT  cheribuild output directory with a riscv64-purecap
 #             CheriBSD disk image (stage 5)
-#   CHERIBSD_SMP  number of harts CheriBSD boots with (default: 1)
+#   CHERIBSD_SMP  number of harts CheriBSD boots with (default: 1; QEMU
+#             runs them with MTTCG when it supports MTTCG for CHERI)
 #   CHERIBSD_LOG  CheriBSD console log (default: cheribsd-tests.log)
 #   ALLIANCE_QEMU  CHERI-Alliance qemu-system-riscv64xcheri with RVFI-DII
 #             (stage 4b)
@@ -438,7 +441,7 @@ fi
 
 if want bench; then
   echo "=== QEMU-only tests"
-  BENCH_INCLUDE=${BENCH_INCLUDE-} BENCH_EXCLUDE=${BENCH_EXCLUDE-} \
+  BENCH_INCLUDE=${BENCH_INCLUDE-} BENCH_EXCLUDE=${BENCH_EXCLUDE-} BENCH_MTTCG=${BENCH_MTTCG-} \
     "$here/qemu-only-tests.sh" "$qemu" || status=1
 fi
 

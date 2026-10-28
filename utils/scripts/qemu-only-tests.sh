@@ -5,9 +5,12 @@
 # implement, so TestRIG cannot compare them. Each test exits through the virt
 # machine's test device: exit status 0 is a pass, N is failed check N (99 is
 # an unexpected trap). A "# QEMU_CPU: <cpu>" line selects the -cpu value
-# (default rv64) and "# QEMU_SMP: <n>" the number of harts (default 1; the
-# harts run round-robin, QEMU's default for CHERI), "# QEMU_ARGS: <args>" adds
-# QEMU options (e.g. devices). "# QEMU_VERSION: >=<x.y>" runs the test only on
+# (default rv64) and "# QEMU_SMP: <n>" the -smp value (default 1),
+# "# QEMU_ARGS: <args>" adds QEMU options (e.g. devices). "# QEMU_THREADS:
+# single multi" runs the test once per TCG thread mode (-accel
+# tcg,thread=...; reported as name[mode]): round-robin and MTTCG. A QEMU
+# that warns its guest is "not yet converted to MTTCG" (no MTTCG for CHERI)
+# reports the multi run as skipped. "# QEMU_VERSION: >=<x.y>" runs the test only on
 # QEMU x.y or later (for extensions a QEMU rebase added; older QEMUs report it
 # as skipped). A "# XFAIL: <reason>" line marks a known failure: it is
 # reported but does not fail the run, and passing is reported as XPASS (then
@@ -19,6 +22,8 @@
 #   CROSS_CC  RISC-V cross compiler (default: riscv64-linux-gnu-gcc)
 #   BENCH_INCLUDE  regex of test names (file name without .S) to run
 #   BENCH_EXCLUDE  regex of test names to skip
+#   BENCH_MTTCG  "require": a skipped multi run fails instead (for a QEMU
+#             that must support MTTCG)
 set -u
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -33,6 +38,41 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
 status=0
+# run <name> <src> <cpu> <smp> <xfail> <args...>: run one test and report it
+run() {
+  local name=$1 src=$2 cpu=$3 smp=$4 xfail=$5 rc
+  shift 5
+  # In a subshell, so a QEMU that aborts is reported in the log, not by bash.
+  (timeout 30 "$qemu" -machine virt -smp "${smp:-1}" -cpu "${cpu:-rv64}" -bios none \
+    -kernel "$tmp/$(basename "$src" .S).elf" -display none -monitor none \
+    -serial none "$@"; exit $?) >"$tmp/$name.log" 2>&1
+  rc=$?
+  if grep -q "not yet converted to MTTCG" "$tmp/$name.log"; then
+    if [ "${BENCH_MTTCG:-}" = require ]; then
+      echo "FAIL: $name: this QEMU has no MTTCG for CHERI (BENCH_MTTCG=require)"
+      status=1
+    else
+      echo "skipped: $name (this QEMU has no MTTCG for CHERI)"
+    fi
+    return
+  fi
+  if [ -n "$xfail" ]; then
+    if [ $rc -eq 0 ]; then
+      echo "XPASS: $name passes now; remove its XFAIL line ($xfail)"
+    else
+      echo "xfail: $name (exit $rc: $xfail)"
+    fi
+    return
+  fi
+  case $rc in
+    0)   echo "ok: $name" ;;
+    124) echo "FAIL: $name timed out"; status=1 ;;
+    99)  echo "FAIL: $name took an unexpected trap"; status=1 ;;
+    *)   echo "FAIL: $name failed check $rc"; sed 's/^/  /' "$tmp/$name.log"
+         status=1 ;;
+  esac
+}
+
 for src in "$dir"/*.S; do
   name=$(basename "$src" .S)
   if { [ -n "${BENCH_INCLUDE:-}" ] && ! [[ $name =~ $BENCH_INCLUDE ]]; } ||
@@ -44,6 +84,7 @@ for src in "$dir"/*.S; do
   xfail=$(sed -n 's/^# XFAIL: *//p' "$src" | head -1)
   smp=$(sed -n 's/^# QEMU_SMP: *//p' "$src" | head -1)
   args=$(sed -n 's/^# QEMU_ARGS: *//p' "$src" | head -1)
+  threads=$(sed -n 's/^# QEMU_THREADS: *//p' "$src" | head -1)
   min=$(sed -n 's/^# QEMU_VERSION: *>= *//p' "$src" | head -1)
   if [ -n "$min" ] &&
      [ "$(printf '%s\n' "$min" "$qemu_version" | sort -V | head -1)" != "$min" ]; then
@@ -54,24 +95,14 @@ for src in "$dir"/*.S; do
       -I "$dir" -T "$dir/link.ld" -o "$tmp/$name.elf" "$src"; then
     echo "FAIL: $name does not assemble"; status=1; continue
   fi
-  timeout 30 "$qemu" -machine virt -smp "${smp:-1}" -cpu "${cpu:-rv64}" -bios none \
-    -kernel "$tmp/$name.elf" -display none -monitor none -serial none $args \
-    >"$tmp/$name.log" 2>&1
-  rc=$?
-  if [ -n "$xfail" ]; then
-    if [ $rc -eq 0 ]; then
-      echo "XPASS: $name passes now; remove its XFAIL line ($xfail)"
-    else
-      echo "xfail: $name (exit $rc: $xfail)"
-    fi
-    continue
+  if [ -z "$threads" ]; then
+    # shellcheck disable=SC2086  # QEMU_ARGS is a word list
+    run "$name" "$src" "$cpu" "$smp" "$xfail" $args
+  else
+    for mode in $threads; do
+      # shellcheck disable=SC2086
+      run "$name[$mode]" "$src" "$cpu" "$smp" "$xfail" -accel "tcg,thread=$mode" $args
+    done
   fi
-  case $rc in
-    0)   echo "ok: $name" ;;
-    124) echo "FAIL: $name timed out"; status=1 ;;
-    99)  echo "FAIL: $name took an unexpected trap"; status=1 ;;
-    *)   echo "FAIL: $name failed check $rc"; sed 's/^/  /' "$tmp/$name.log"
-         status=1 ;;
-  esac
 done
 exit $status

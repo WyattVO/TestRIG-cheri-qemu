@@ -11,6 +11,11 @@
     .macro cgettag rd, cs1
     .insn r 0x5b, 0, 0x7f, \rd, \cs1, x4
     .endm
+    /* rd = tags of the capabilities at cs1 (aligned to 4 capabilities on
+       RV64), bit n = the nth one. */
+    .macro cloadtags rd, cs1
+    .insn r 0x5b, 0, 0x7f, \rd, \cs1, x18
+    .endm
     /* Store/load a capability at an integer address, authorized by DDC. */
     .macro sc_ddc cs2, rs1
     .insn r 0x5b, 0, 0x7c, x4, \rs1, \cs2
