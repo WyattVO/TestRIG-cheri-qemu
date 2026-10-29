@@ -57,6 +57,8 @@ was an upstream bug.
 | Tags | Cache-block zero | `cbo-zero-cheri` | `cbo.zero` keeping tags |
 | Tags | Two harts, round-robin and MTTCG (MTTCG runs opt-in: `BENCH_MTTCG=on`, or `full-mttcg.conf`) | `smp-tag-consistency`, `smp-tag-atomics` | a torn capability (tag on another hart's plain data, `amoswap.d` or `cbo.zero` result) |
 | Tags | MTTCG tag store (lock_tag; opt-in as above) | `tags-concurrent-mode` | a store, AMO, LR/SC, CAS or `cbo.zero` path that skips the tag lock or keeps a tag; CLoadTags reading the lock bytes in the wrong order |
+| Tags | A fault while the tag lock is held (opt-in as above) | `smp-tag-lock-fault` | a faulting store, AMO or `cbo.zero` that leaks its tag lock (QEMU hangs or asserts) or writes the tag or data anyway |
+| Tags | Memory ordering of capabilities (MP litmus; opt-in as above) | `smp-tag-message-passing` | tag and data, or a capability's two halves, becoming visible separately or out of fence order |
 | Permissions | Store-conditional needs Store | `sc-store-permission`, traces 29, 30 | SC/`sc.c`/`amoswap.c` checking the wrong permission |
 | Permissions | DDC and capability authority for extension instructions | `ext-mem-insns-cheri`, `ext-mem-insns-capmode`, `xthead-mem-cheri`, `cbo-zero-cheri`, `cbo-inval-bounds` | an extension's load/store bypassing bounds or Store permission, in integer or capability mode |
 | Permissions | ASR | `asr-permission`, trace 20 | privileged CSRs/SCRs, `mret`, `cbo.inval` usable without ASR |
@@ -95,6 +97,9 @@ against a QEMU where the behaviour it checks is broken, and failed:
   with `cbo.zero` aborts there; without it, check 1 fails);
 - `tags-concurrent-mode` fails check 1 with the series' big-endian lock-byte
   read put back (2026-10-28), and check 6 on 10.2 without the series;
+- `smp-tag-lock-fault` aborts QEMU (lock list assertion) with the release
+  of held tag locks on a fault removed, and on 10.2 without the series
+  (2026-10-29); `smp-tag-message-passing` fails check 1 there, 5/5 runs;
 - `amocas-rd-x0` fails on upstream QEMU 10.2, which has the bug: each of its
   five checks alone exits with its own number there.
 

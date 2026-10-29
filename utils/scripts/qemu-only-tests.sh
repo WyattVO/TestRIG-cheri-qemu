@@ -53,11 +53,13 @@ run() {
   local name=$1 src=$2 cpu=$3 smp=$4 xfail=$5 rc
   shift 5
   # In a subshell, so a QEMU that aborts is reported in the log, not by bash.
-  (timeout 30 "$qemu" -machine virt -smp "${smp:-1}" -cpu "${cpu:-rv64}" -bios none \
+  # -k: a deadlocked QEMU (e.g. a leaked tag lock) ignores SIGTERM.
+  (timeout -k 5 30 "$qemu" -machine virt -smp "${smp:-1}" -cpu "${cpu:-rv64}" -bios none \
     -kernel "$tmp/$(basename "$src" .S).elf" -display none -monitor none \
     -serial none "$@"; exit $?) >"$tmp/$name.log" 2>&1
   rc=$?
-  if grep -q "not yet converted to MTTCG" "$tmp/$name.log"; then
+  # Upstream's warning, or the CHERI port's refusal of unsafe MTTCG.
+  if grep -q "not yet converted to MTTCG\|CHERI capability tags are not thread-safe" "$tmp/$name.log"; then
     if [ "$BENCH_MTTCG" = require ]; then
       say FAIL "$name: this QEMU has no MTTCG for CHERI (BENCH_MTTCG=require)"
       status=1
@@ -76,9 +78,14 @@ run() {
   fi
   case $rc in
     0)   say ok "$name" ;;
-    124) say FAIL "$name timed out"; status=1 ;;
+    124|137) say FAIL "$name timed out (hung)"; status=1 ;;
     99)  say FAIL "$name took an unexpected trap"; status=1 ;;
-    *)   say FAIL "$name failed check $rc"; sed 's/^/  /' "$tmp/$name.log"
+    *)   if [ $rc -gt 128 ]; then
+           say FAIL "$name: QEMU crashed (signal $((rc - 128)))"
+         else
+           say FAIL "$name failed check $rc"
+         fi
+         sed 's/^/  /' "$tmp/$name.log"
          status=1 ;;
   esac
 }
