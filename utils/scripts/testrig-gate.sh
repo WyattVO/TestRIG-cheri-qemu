@@ -258,13 +258,17 @@ for s in $STAGES; do
 done
 want() { [ -z "${why[$1]}" ]; }
 
-# git_rev <dir>: "<branch> <short commit>[-dirty]" of the checkout holding dir.
+# git_rev <dir>: "<branch> <short commit>[-dirty]" of the checkout holding dir
+# ("detached" for a checked-out commit, e.g. in the Docker image).
 git_rev() {
   local top rev
   top=$(git -C "$1" rev-parse --show-toplevel 2>/dev/null) || { echo "- unknown"; return; }
   rev=$(git -C "$top" rev-parse --short=10 HEAD)
   git -C "$top" diff --quiet HEAD -- 2>/dev/null || rev+=-dirty
-  echo "$(git -C "$top" rev-parse --abbrev-ref HEAD) $rev"
+  local branch
+  branch=$(git -C "$top" rev-parse --abbrev-ref HEAD)
+  [ "$branch" = HEAD ] && branch=detached
+  echo "$branch $rev"
 }
 
 # Save the whole run: from here on, output also goes to $log.
@@ -275,7 +279,9 @@ if [ $list_only -eq 0 ]; then
   read -r qemu_branch qemu_rev <<<"$(git_rev "$(dirname "$qemu")")"
   read -r rig_branch rig_rev <<<"$(git_rev "$root")"
   profile=$(basename "${config:-adhoc}" .conf)
-  log_base=$log_dir/$(date +%Y%m%d-%H%M%S)-${qemu_branch//\//_}-$qemu_rev-$profile
+  name=${qemu_branch//\//_}-
+  [ "$qemu_branch" = detached ] && name=
+  log_base=$log_dir/$(date +%Y%m%d-%H%M%S)-$name$qemu_rev-$profile
   log=$log_base.log
   exec 3>&1 4>&2
   exec > >(tee -a "$log") 2>&1

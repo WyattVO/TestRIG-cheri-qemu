@@ -20,7 +20,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # The image's own uid-1000 user is replaced by one with the expected home.
 RUN userdel -r ubuntu 2>/dev/null; useradd -m -s /bin/bash -u 1000 researcher
 COPY fetch-rev.sh /usr/local/bin/fetch-rev
-COPY capstone-gate capstone-morello /usr/local/bin/
 USER researcher
 ENV C=/home/researcher/Projects/CAPSTONE
 WORKDIR /home/researcher
@@ -113,6 +112,8 @@ RUN fetch-rev https://github.com/riscv-non-isa/riscv-arch-test.git \
       e30a1c6f1db43d32ea684fe51498d31de2e5d97e $C/refs/morello-generated-tests
 
 ENV PATH=/home/researcher/.ghcup/bin:$PATH
+# Last, so that changing them does not rebuild everything above.
+COPY capstone-gate capstone-morello /usr/local/bin/
 RUN mkdir -p /home/researcher/results
 WORKDIR /home/researcher/results
 CMD ["bash"]
