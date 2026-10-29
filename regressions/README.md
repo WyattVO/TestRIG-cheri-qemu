@@ -167,7 +167,9 @@ across each store, AMO and compare-and-swap. The three tests above run under
 both TCG modes there with `BENCH_MTTCG=on` (by default only their
 round-robin runs are included), and `utils/gate-profiles/full-mttcg.conf`
 requires the MTTCG runs (`BENCH_MTTCG=require`) and boots CheriBSD with four harts
-(`CHERIBSD_SMP=4`). `cheribsd-tests.py --smp N` boots CheriBSD with N harts
+(`CHERIBSD_SMP=4`). CHERI-Alliance QEMU has no MTTCG to compare with, so that
+profile leaves it out (no vote, no gate self-test; Sail is the only reference
+for the traces); `full.conf` still runs the Alliance comparison. `cheribsd-tests.py --smp N` boots CheriBSD with N harts
 for the kernel's SMP paths (on that branch, N host threads). The plugin
 comparison (`upstream-diff.py`) runs with `thread=single`: under MTTCG the
 execlog plugin reads CSRs before reset, when the CHERI PCC has no ASR, and
