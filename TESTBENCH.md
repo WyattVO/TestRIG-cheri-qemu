@@ -51,6 +51,7 @@ was an upstream bug.
 |---|---|---|---|
 | Tags | Ordinary stores clear tags | `tag-clear-store-widths` | a store width, FP or compressed store, or a misaligned split that leaves a tag on non-capability bytes |
 | Tags | Device / DMA writes clear tags | `dma-clears-tags` (address_space_write), `virtio-dma-clears-tags` (map/unmap, as virtio disks and network) | a device-written buffer keeping a tag (forged capability) |
+| Tags | Device writes atomic with their tag clears (MTTCG only, opt-in as below) | `smp-dma-tag-race` | a hart loading a capability between a device's data write and its tag clear: a tagged capability of device bytes |
 | Tags | Atomics and CAS clear tags | `amocas-q-clears-tag`, `amocas-wdb-clears-tag`, `ext-mem-insns-*`, trace 17 | `amocas`, Zabha, SC overwriting a capability without clearing its tag |
 | 10.2 extensions | `amocas` with rd = x0 | `amocas-rd-x0` | the old memory value leaking into later uses of x0 (upstream QEMU bug; the port's CHERI cmpxchg avoided it by luck, fixed properly 2026-10-22) |
 | CHERI instructions | `fpclear` register clearing | `fpclear-registers`, trace 31 | `fpclear` missing, trapping with the FPU on, clearing the wrong registers, writing a NaN-boxed instead of a full zero, or getting `mstatus.FS` wrong |
@@ -97,6 +98,9 @@ against a QEMU where the behaviour it checks is broken, and failed:
   with `cbo.zero` aborts there; without it, check 1 fails);
 - `tags-concurrent-mode` fails check 1 with the series' big-endian lock-byte
   read put back (2026-10-28), and check 6 on 10.2 without the series;
+- `smp-dma-tag-race` fails check 3 (a forged capability) within 200 device
+  requests on the lock_tag branch before device writes took the tag locks
+  (2026-10-29, 3/3 runs);
 - `smp-tag-lock-fault` aborts QEMU (lock list assertion) with the release
   of held tag locks on a fault removed, and on 10.2 without the series
   (2026-10-29); `smp-tag-message-passing` fails check 1 there, 5/5 runs;
@@ -134,9 +138,12 @@ against a QEMU where the behaviour it checks is broken, and failed:
   (`regressions/coverage-required.txt` lists every coverage gap).
 
 - MTTCG (lock_tag branch): no bare-metal test races the page walker's
-  A/D/CD update against a capability store (CheriBSD on 4 harts covers it);
-  device DMA writes and their tag clears are still not atomic with respect
-  to a hart (as before the series); Morello has no MTTCG.
+  A/D/CD update against a capability store (CheriBSD on 4 harts covers it).
+  Device writes are atomic with their tag clears under MTTCG only (tag
+  locks, bounce buffers); round-robin TCG has no tag locks, so a block
+  device's worker thread writing a mapped buffer can still race a hart that
+  loads a capability from that buffer during the I/O. Morello has no MTTCG
+  (QEMU refuses `-accel tcg,thread=multi` with more than one CPU).
 - `riscv64cheristd` (CHERI 0.9.3 standard) has no bench or CheriBSD run.
 - Vector and hypervisor are refused on CHERI; `disabled-ext-inert` checks they
   stay off. Testing them for real needs a CHERI-aware implementation first.
