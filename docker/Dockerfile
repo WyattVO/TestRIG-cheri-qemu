@@ -39,7 +39,7 @@ RUN python3 -m venv --system-site-packages $C/.venv \
     && $C/.venv/bin/pip install --no-cache-dir meson==1.2.3 pytest==9.0.2 pytest-xdist
 
 # TestRIG gate, QuickCheckVEngine and the Sail CHERI-RISC-V model.
-ARG TESTRIG_REV=1fc4b279ef641eb3ff9825028dae0cf4e0fba0bb
+ARG TESTRIG_REV=10305796c054cf7a6ab47d112f211b30a3b13cb1
 RUN fetch-rev https://github.com/WyattVO/TestRIG-cheri-qemu.git $TESTRIG_REV $C/TestRig-AI/TestRIG-cheri-qemu \
     && cd $C/TestRig-AI/TestRIG-cheri-qemu \
     && git submodule update --init --recursive --depth 1 \
@@ -67,6 +67,15 @@ RUN fetch-rev https://github.com/WyattVO/cheri-qemu-port.git $PORT_REV $C/cheri-
          --enable-rvfi-dii --disable-rust $QEMU_FLAGS && ninja \
     && mkdir ../build-morello && cd ../build-morello \
     && ../configure --target-list=morello-softmmu --disable-rust $QEMU_FLAGS && ninja
+
+# The port's MTTCG branch (cheri-10.2-mttcg: the lock_tag series, RISC-V only),
+# tested with utils/gate-profiles/full-mttcg.conf (capstone-gate --mttcg).
+ARG MTTCG_REV=adb99fe38d4ed8adbd30d4a0a1164c2ccc9ec399
+RUN fetch-rev https://github.com/WyattVO/cheri-qemu-port.git $MTTCG_REV $C/cheri-qemu-AI/cheri-qemu-10.2-mttcg \
+    && cd $C/cheri-qemu-AI/cheri-qemu-10.2-mttcg \
+    && mkdir build && cd build \
+    && ../configure --target-list=riscv64xcheri-softmmu \
+         --enable-rvfi-dii --disable-rust $QEMU_FLAGS && ninja
 
 # CHERI-QEMU 7.1 with RVFI-DII, for the gate self-test (stage 2b).
 ARG SELFTEST_REV=744bf35150bd33f09f4b9857b903cef5f14bc862

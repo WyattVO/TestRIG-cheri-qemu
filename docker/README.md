@@ -6,7 +6,8 @@ compares it against. Each part is built from a pinned commit:
 | Part | Commit | Gate stage |
 |---|---|---|
 | CHERI QEMU 10.2 port, RISC-V with RVFI-DII and Morello ([cheri-qemu-port](https://github.com/WyattVO/cheri-qemu-port/tree/cheri-10.2)) | `da1a391963` | under test |
-| TestRIG gate ([TestRIG-cheri-qemu](https://github.com/WyattVO/TestRIG-cheri-qemu/tree/testrig-cheri-qemu-10.2)), QuickCheckVEngine `3fdf0a91bf` | `1fc4b27` | all |
+| The port's MTTCG branch, RISC-V with RVFI-DII ([cheri-10.2-mttcg](https://github.com/WyattVO/cheri-qemu-port/tree/cheri-10.2-mttcg)) | `adb99fe38d` | under test (`--mttcg`) |
+| TestRIG gate ([TestRIG-cheri-qemu](https://github.com/WyattVO/TestRIG-cheri-qemu/tree/testrig-cheri-qemu-10.2-mttcg)), QuickCheckVEngine `3fdf0a91bf` | `1030579` | all |
 | Sail CHERI-RISC-V model `74a9da1f78` (Sail 0.18, OCaml 5.2.1), with `utils/patches/sail-riscv-rvfi-reset-reservation.patch` | | 2, 4 |
 | CHERI-QEMU 7.1, the gate self-test | `744bf35150` | 2b |
 | CHERI-Alliance QEMU main (7.2) | `937b306b8b` | 2, 4, 4b |
@@ -14,8 +15,9 @@ compares it against. Each part is built from a pinned commit:
 | riscv-arch-test 3.9.1 | `eb66181` | 6 |
 | morello-generated-tests | `e30a1c6` | Morello |
 
-These are the commits of the 10.2 baseline, which passed every stage on
-2026-10-23. CheriBSD (stage 5) is not part of the image because it is 13 GB.
+The port, the references and the test suites are the commits of the 10.2
+baseline, which passed every stage on 2026-10-23; the gate and the MTTCG
+branch are newer (2026-10-29). CheriBSD (stage 5) is not part of the image because it is 13 GB.
 To run stage 5, mount a cheribuild output directory (see below).
 
 The image takes 16 GB of disk (about 3.3 GB of content) and about 25
@@ -31,7 +33,7 @@ From a clone of TestRIG-cheri-qemu:
 
 You can build a different commit of any part with `--build-arg`, for example
 `--build-arg PORT_REV=<commit>`. The names are `TESTRIG_REV`, `PORT_REV`,
-`SELFTEST_REV`, `ALLIANCE_REV` and `UPSTREAM_REV`.
+`MTTCG_REV`, `SELFTEST_REV`, `ALLIANCE_REV` and `UPSTREAM_REV`.
 
 ## Run the gate
 
@@ -41,10 +43,18 @@ You can build a different commit of any part with `--build-arg`, for example
 
 `capstone-gate` runs `utils/scripts/testrig-gate.sh` with
 `utils/gate-profiles/full.conf` on the 10.2 port, at 100 tests per template.
-It writes the logs and any failing tests into `results/`. With the baseline
+It writes each run's log to `results/gate-logs/` (named by date, QEMU
+branch and commit, and profile, with a header saying what was tested) and
+any failing tests to `results/random-failures/`. With the baseline
 seed, a full run takes several hours:
 
     docker run ... cheri-qemu-gate:10.2 env SEED=20261023 capstone-gate
+
+To test the MTTCG branch instead, with `full-mttcg.conf` (the bench's MTTCG
+runs are required, CheriBSD boots with 4 harts, and CHERI-Alliance QEMU,
+which has no MTTCG, is left out):
+
+    docker run ... cheri-qemu-gate:10.2 capstone-gate --mttcg
 
 `capstone-gate` accepts every option of the gate script (`capstone-gate
 --help`). Some useful ones:
@@ -58,7 +68,8 @@ the random tests never generated a rare instruction. At 10 tests,
 `cinvoke completed 0 times` is typical. Add `--skip coverage` for short
 runs.
 
-The gate prints `TESTRIG GATE: PASS` or `FAIL`. A CHERI result counts as an
+The gate ends with a summary (each stage's result, time and notes) and
+`TESTRIG GATE: PASS` or `FAIL`. A CHERI result counts as an
 ERROR when this QEMU disagrees with both Sail and Alliance QEMU. It counts as
 a WARNING when it disagrees with only one of them. The repository's
 `README.md` and `TESTBENCH.md` explain every stage and test.
@@ -103,6 +114,7 @@ Everything is under `/home/researcher/Projects/CAPSTONE`, in the layout
 
     TestRig-AI/TestRIG-cheri-qemu/        the gate, with QuickCheckVEngine and Sail built
     cheri-qemu-AI/cheri-qemu-10.2/build   the port (RISC-V), build-morello (Morello)
+    cheri-qemu-AI/cheri-qemu-10.2-mttcg/build   the MTTCG branch (RISC-V)
     cheri-qemu-AI/cheri-qemu-port/build   CHERI-QEMU 7.1
     refs/alliance-qemu/build              CHERI-Alliance QEMU
     refs/upstream-qemu-10.2/build         upstream QEMU v10.2.0
