@@ -41,7 +41,7 @@ and CHERI-Alliance QEMU. With `ALLIANCE_QEMU` (or `--alliance`) set, stages
 | Level | When | Verdicts | Gate |
 |---|---|---|---|
 | **ERROR** | this QEMU disagrees with **both** references, or a replay gave no answer | `port-differs` (Sail and Alliance agree), `both-differ` (all three differ), `not-replayed` | fails |
-| **WARNING** | this QEMU disagrees with **one** reference | `sail-disagrees` (both QEMUs agree, Sail differs), `alliance-differs` (this QEMU agrees with Sail) | passes, `TESTRIG GATE: PASS (N warnings)`; the warnings are listed at the end |
+| **WARNING** | this QEMU disagrees with **one** reference | `sail-disagrees` (both QEMUs agree, Sail differs), `alliance-differs` (this QEMU agrees with Sail) | passes, `TESTRIG GATE: PASS (N warnings)`; the summary counts them and the run's `.warnings.txt` lists them |
 
 `--warnings-fatal` (or `WARNINGS_FATAL=1`) makes WARNINGs fail the gate too.
 Without `ALLIANCE_QEMU`, or with `--against` not naming `alliance`, Sail is
@@ -222,13 +222,18 @@ CHERIBSD_OUTPUT=~/cheri/output utils/scripts/testrig-gate.sh $QEMU 100     # all
 utils/scripts/testrig-gate.sh --config utils/gate-profiles/full.conf $QEMU 100  # every stage, refs in ~/Projects/CAPSTONE
 ```
 
-It ends with `TESTRIG GATE: PASS`, `PASS (N warnings)` (listed just above)
-or `FAIL`. Don't edit `testrig-gate.sh`
+It ends with a summary (each stage's result, time and notes, and the
+warnings counted by stage) and `TESTRIG GATE: PASS`, `PASS (N warnings)` or
+`FAIL (<stages> failed)`. Every run is saved to `GATE_LOG_DIR` (default
+`gate-logs/`; the `full*` profiles use `~/Projects/CAPSTONE/reports/gate-runs`)
+as `<date>-<QEMU branch>-<QEMU commit>-<profile>.log`, whose header records the
+host, both commits, the profile and the seed; the CheriBSD console log and the
+full warning list are saved next to it. Don't edit `testrig-gate.sh`
 while it runs: bash reads the script as it goes. Environment variables
 `EXCLUDE`, `SEED`, `SAVE_DIR`, `ARCH`, `CSR_EXCLUDE`, `QEMU_CPU_EXTRA`,
 `QCVENGINE`, `CROSS_CC`, `VOTE_TESTS` and the optional stages' variables are
 described at the top of the script. `CHERIBSD_LOG` sets where the
-CheriBSD console log is written (default `cheribsd-tests.log`).
+CheriBSD console log is written (default: next to the run's log).
 
 ### Turning tests on and off
 

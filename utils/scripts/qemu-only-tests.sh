@@ -45,6 +45,9 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
 status=0
+declare -A count=()
+# say <kind> <text>: report one result (ok, FAIL, skipped, xfail, XPASS)
+say() { echo "$1: $2"; count[$1]=$((${count[$1]:-0} + 1)); }
 # run <name> <src> <cpu> <smp> <xfail> <args...>: run one test and report it
 run() {
   local name=$1 src=$2 cpu=$3 smp=$4 xfail=$5 rc
@@ -56,26 +59,26 @@ run() {
   rc=$?
   if grep -q "not yet converted to MTTCG" "$tmp/$name.log"; then
     if [ "$BENCH_MTTCG" = require ]; then
-      echo "FAIL: $name: this QEMU has no MTTCG for CHERI (BENCH_MTTCG=require)"
+      say FAIL "$name: this QEMU has no MTTCG for CHERI (BENCH_MTTCG=require)"
       status=1
     else
-      echo "skipped: $name (this QEMU has no MTTCG for CHERI)"
+      say skipped "$name (this QEMU has no MTTCG for CHERI)"
     fi
     return
   fi
   if [ -n "$xfail" ]; then
     if [ $rc -eq 0 ]; then
-      echo "XPASS: $name passes now; remove its XFAIL line ($xfail)"
+      say XPASS "$name passes now; remove its XFAIL line ($xfail)"
     else
-      echo "xfail: $name (exit $rc: $xfail)"
+      say xfail "$name (exit $rc: $xfail)"
     fi
     return
   fi
   case $rc in
-    0)   echo "ok: $name" ;;
-    124) echo "FAIL: $name timed out"; status=1 ;;
-    99)  echo "FAIL: $name took an unexpected trap"; status=1 ;;
-    *)   echo "FAIL: $name failed check $rc"; sed 's/^/  /' "$tmp/$name.log"
+    0)   say ok "$name" ;;
+    124) say FAIL "$name timed out"; status=1 ;;
+    99)  say FAIL "$name took an unexpected trap"; status=1 ;;
+    *)   say FAIL "$name failed check $rc"; sed 's/^/  /' "$tmp/$name.log"
          status=1 ;;
   esac
 }
@@ -84,7 +87,7 @@ for src in "$dir"/*.S; do
   name=$(basename "$src" .S)
   if { [ -n "${BENCH_INCLUDE:-}" ] && ! [[ $name =~ $BENCH_INCLUDE ]]; } ||
      { [ -n "${BENCH_EXCLUDE:-}" ] && [[ $name =~ $BENCH_EXCLUDE ]]; }; then
-    echo "skipped: $name"
+    count[unselected]=$((${count[unselected]:-0} + 1))
     continue
   fi
   cpu=$(sed -n 's/^# QEMU_CPU: *//p' "$src" | head -1)
@@ -95,12 +98,13 @@ for src in "$dir"/*.S; do
   min=$(sed -n 's/^# QEMU_VERSION: *>= *//p' "$src" | head -1)
   if [ -n "$min" ] &&
      [ "$(printf '%s\n' "$min" "$qemu_version" | sort -V | head -1)" != "$min" ]; then
-    echo "skipped: $name (needs QEMU $min or later, this is $qemu_version)"
+    say skipped "$name (needs QEMU $min or later, this is $qemu_version)"
     continue
   fi
-  if ! "$cc" -march=rv64gc -mabi=lp64 -nostdlib -nostartfiles -static \
+  # The tests are one RWX segment on purpose; don't warn about it.
+  if ! "$cc" -march=rv64gc -mabi=lp64 -nostdlib -nostartfiles -static -Wl,--no-warn-rwx-segments \
       -I "$dir" -T "$dir/link.ld" -o "$tmp/$name.elf" "$src"; then
-    echo "FAIL: $name does not assemble"; status=1; continue
+    say FAIL "$name does not assemble"; status=1; continue
   fi
   if [ -z "$threads" ]; then
     # shellcheck disable=SC2086  # QEMU_ARGS is a word list
@@ -108,7 +112,7 @@ for src in "$dir"/*.S; do
   else
     for mode in $threads; do
       if [ "$mode" = multi ] && [ "$BENCH_MTTCG" = off ]; then
-        echo "skipped: $name[multi] (MTTCG runs off, set BENCH_MTTCG=on)"
+        say skipped "$name[multi] (MTTCG runs off, set BENCH_MTTCG=on)"
         continue
       fi
       # shellcheck disable=SC2086
@@ -116,4 +120,11 @@ for src in "$dir"/*.S; do
     done
   fi
 done
+# One line for the gate's summary, e.g. "bench: 33 ok, 1 xfail, 2 skipped".
+summary="${count[ok]:-0} ok"
+for k in FAIL xfail XPASS skipped; do
+  [ -z "${count[$k]:-}" ] || summary+=", ${count[$k]} $k"
+done
+[ -z "${count[unselected]:-}" ] || summary+=" (${count[unselected]} not selected)"
+echo "bench: $summary"
 exit $status

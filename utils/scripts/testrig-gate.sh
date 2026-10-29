@@ -41,6 +41,12 @@
 #                  (upstream-tests.sh), and riscv-arch-test signatures and
 #                  instruction traces on both (upstream-diff.py; needs
 #                  UPSTREAM_BUILD, and ARCH_TEST for the arch tests).
+# Every run (not --list) is saved: GATE_LOG_DIR/<date>-<QEMU branch>-<QEMU
+# commit>-<profile>.log holds the whole output after a header that says what
+# was tested (host, QEMU and TestRIG commits, profile, seed), with the CheriBSD
+# console log and the warnings next to it. The run ends with a summary: one
+# line per stage with its result, time and notes.
+#
 # A stage whose reference is not configured is skipped with a note, unless
 # it was asked for with --only or --against (then it is an error). The plan
 # (what runs, what is skipped and why) is printed first.
@@ -106,7 +112,8 @@
 #             CheriBSD disk image (stage 5)
 #   CHERIBSD_SMP  number of harts CheriBSD boots with (default: 1; QEMU
 #             runs them with MTTCG when it supports MTTCG for CHERI)
-#   CHERIBSD_LOG  CheriBSD console log (default: cheribsd-tests.log)
+#   CHERIBSD_LOG  CheriBSD console log (default: next to the run's log)
+#   GATE_LOG_DIR  where each run's log is saved (default: gate-logs/)
 #   ALLIANCE_QEMU  CHERI-Alliance qemu-system-riscv64xcheri with RVFI-DII
 #             (stage 4b)
 #   VOTE_TESTS  random tests per template in stage 4b (default: tests-per-template)
@@ -121,6 +128,7 @@
 #             regressions/alliance-shares-bug.txt; empty: nowhere)
 set -u
 
+cmdline=$(printf '%q ' "$0" "$@")
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
 STAGES="policy regressions selftest bench random coverage vote cheribsd upstream"
@@ -250,6 +258,41 @@ for s in $STAGES; do
 done
 want() { [ -z "${why[$1]}" ]; }
 
+# git_rev <dir>: "<branch> <short commit>[-dirty]" of the checkout holding dir.
+git_rev() {
+  local top rev
+  top=$(git -C "$1" rev-parse --show-toplevel 2>/dev/null) || { echo "- unknown"; return; }
+  rev=$(git -C "$top" rev-parse --short=10 HEAD)
+  git -C "$top" diff --quiet HEAD -- 2>/dev/null || rev+=-dirty
+  echo "$(git -C "$top" rev-parse --abbrev-ref HEAD) $rev"
+}
+
+# Save the whole run: from here on, output also goes to $log.
+log=
+if [ $list_only -eq 0 ]; then
+  log_dir=${GATE_LOG_DIR:-$root/gate-logs}
+  mkdir -p "$log_dir" || exit 2
+  read -r qemu_branch qemu_rev <<<"$(git_rev "$(dirname "$qemu")")"
+  read -r rig_branch rig_rev <<<"$(git_rev "$root")"
+  profile=$(basename "${config:-adhoc}" .conf)
+  log_base=$log_dir/$(date +%Y%m%d-%H%M%S)-${qemu_branch//\//_}-$qemu_rev-$profile
+  log=$log_base.log
+  exec 3>&1 4>&2
+  exec > >(tee -a "$log") 2>&1
+  tee_pid=$!
+  echo "=== TestRIG gate, $(date '+%Y-%m-%d %H:%M:%S %Z')"
+  echo "  command:  $cmdline"
+  echo "  profile:  ${config:-none}"
+  echo "  QEMU:     $qemu"
+  echo "            $("$qemu" --version 2>/dev/null | head -1)"
+  echo "            branch $qemu_branch, commit $qemu_rev"
+  echo "  TestRIG:  branch $rig_branch, commit $rig_rev"
+  echo "  host:     $(uname -srm), $(nproc) CPUs, $(sed -n 's/^model name[^:]*: //p' /proc/cpuinfo | head -1)"
+  echo "  seed:     $seed ($ntests tests per template)"
+  echo "  settings: BENCH_MTTCG=${BENCH_MTTCG:-off} CHERIBSD_SMP=${CHERIBSD_SMP:-1}"
+  echo "  log:      $log"
+fi
+
 echo "=== Plan (QEMU ${qemu}, $ntests tests per template)"
 plan_error=0
 for s in $STAGES; do
@@ -346,7 +389,23 @@ trap 'rm -rf "$tmp"' EXIT
 warnings=$tmp/warnings
 status=0
 
+# Each stage records its own result, time and notes for the summary.
+declare -A result=() took=() note=()
+nwarnings() { if [ -s "$warnings" ]; then wc -l <"$warnings"; else echo 0; fi; }
+stage_begin() {
+  stage=$1 stage_t0=$SECONDS stage_status=$status status=0 stage_w0=$(nwarnings)
+}
+stage_end() {
+  local nw=$(( $(nwarnings) - stage_w0 ))
+  if [ $status -eq 0 ]; then result[$stage]=PASS; else result[$stage]=FAIL; fi
+  took[$stage]=$((SECONDS - stage_t0))
+  [ $nw -eq 0 ] || note[$stage]+="${note[$stage]:+; }$nw warnings"
+  status=$((stage_status | status))
+}
+hms() { printf '%d:%02d:%02d' $(($1 / 3600)) $(($1 / 60 % 60)) $(($1 % 60)); }
+
 if want policy; then
+  stage_begin policy
   echo "=== CHERI extension policy"
   for ext in v h zve32x zvbb smnpm ssnpm supm svrsw60t59b zcmt smrnmi zicfiss \
       zicfilp; do
@@ -368,6 +427,7 @@ if want policy; then
   # New extensions (e.g. QEMU 11's Zalasr, Zilsd, Xmipslsp) fail here until
   # they are reviewed for CHERI.
   python3 "$here/cheri-ext-review.py" "$qemu" || status=1
+  stage_end
 fi
 
 # Print the traces in a directory that --trace-exclude does not remove.
@@ -384,6 +444,7 @@ traces_in() {
 }
 
 if want regressions; then
+  stage_begin regressions
   for dir in "$root"/regressions/*/; do
     dir=${dir%/}
     case $(basename "$dir") in qemu-only|open-bugs) continue ;; esac
@@ -413,9 +474,11 @@ if want regressions; then
       echo "xfail: ${trace#$root/}"
     fi
   done
+  stage_end
 fi
 
 if want selftest; then
+  stage_begin selftest
   echo "=== Gate self-test: CHERI-QEMU 7.1 must get the expected verdicts"
   expected=$root/utils/gate-selftest/qemu-7.1-expected.txt
   st_dir=$save_dir/selftest
@@ -438,15 +501,21 @@ if want selftest; then
     echo "      If intended, put the lines of $st_dir/verdicts.txt into ${expected#$root/}"
     status=1
   fi
+  stage_end
 fi
 
 if want bench; then
+  stage_begin bench
   echo "=== QEMU-only tests"
   BENCH_INCLUDE=${BENCH_INCLUDE-} BENCH_EXCLUDE=${BENCH_EXCLUDE-} BENCH_MTTCG=${BENCH_MTTCG-} \
-    "$here/qemu-only-tests.sh" "$qemu" || status=1
+    "$here/qemu-only-tests.sh" "$qemu" | tee "$tmp/bench.out"
+  [ "${PIPESTATUS[0]}" -eq 0 ] || status=1
+  note[bench]=$(sed -n 's/^bench: //p' "$tmp/bench.out")
+  stage_end
 fi
 
 if want random; then
+  stage_begin random
   echo "=== Random tests: $ntests per template (templates: ${templates:-all}, excluding: ${exclude:-none}, seed $seed)"
   mkdir -p "$save_dir"
   stats=$save_dir/stats-$seed.txt
@@ -475,9 +544,12 @@ if want random; then
       status=1
     fi
   fi
+  note[random]="$ntests per template, seed $seed"
+  stage_end
 fi
 
 if want coverage; then
+  stage_begin coverage
   echo "=== Coverage of the random tests"
   stats=$save_dir/stats-$seed.txt
   if [ -e "$stats" ]; then
@@ -486,9 +558,11 @@ if want coverage; then
     echo "FAIL: no coverage statistics ($stats); run the random stage with the same SEED"
     status=1
   fi
+  stage_end
 fi
 
 if want vote; then
+  stage_begin vote
   echo "=== Three-way vote: Sail, CHERI-Alliance QEMU, this QEMU (seed $seed)"
   vote_dir=$save_dir/vote-$seed
   rm -rf "$vote_dir"
@@ -500,15 +574,24 @@ if want vote; then
     ${vote_exclude:+--test-exclude-regex "$vote_exclude"} \
     ${sail_only:+--sail-only "$sail_only"} --warnings-file "$warnings" \
     $([ "${WARNINGS_FATAL:-0}" = 1 ] && echo --warnings-fatal) || status=1
+  stage_end
 fi
 
 if want cheribsd; then
+  stage_begin cheribsd
   echo "=== CheriBSD tests"
-  python3 "$here/cheribsd-tests.py" "$qemu" "$CHERIBSD_OUTPUT" \
-    --smp "${CHERIBSD_SMP:-1}" --log "${CHERIBSD_LOG:-cheribsd-tests.log}" || status=1
+  python3 -u "$here/cheribsd-tests.py" "$qemu" "$CHERIBSD_OUTPUT" \
+    --smp "${CHERIBSD_SMP:-1}" --log "${CHERIBSD_LOG:-$log_base.cheribsd.log}" |
+    tee "$tmp/cheribsd.out"
+  [ "${PIPESTATUS[0]}" -eq 0 ] || status=1
+  # e.g. "purecap 305 passed, 10 xfail; hybrid 149 passed, 52 xfail; 4 harts"
+  note[cheribsd]="$(sed -nE 's/^cheribsdtest-([a-z]+): passed ([0-9]+), expectedly failed ([0-9]+).*/\1 \2 passed, \3 xfail/p' \
+    "$tmp/cheribsd.out" | paste -sd';' | sed 's/;/; /g'); ${CHERIBSD_SMP:-1} harts"
+  stage_end
 fi
 
 if want upstream; then
+  stage_begin upstream
   echo "=== Upstream QEMU: upstream's own tests on this QEMU"
   "$here/upstream-tests.sh" "$UPSTREAM_BUILD" "$qemu" || status=1
   if [ -n "${ARCH_TEST:-}" ]; then
@@ -518,18 +601,40 @@ if want upstream; then
       ${UPSTREAM_SUITES:+--suites "$UPSTREAM_SUITES"} || status=1
   else
     echo "(riscv-arch-test comparison skipped: ARCH_TEST / --arch-test not set)"
+    note[upstream]="riscv-arch-test comparison skipped"
   fi
+  stage_end
 fi
 
-nwarn=0
-if [ -s "$warnings" ]; then
-  nwarn=$(wc -l <"$warnings")
-  echo "=== Warnings (one reference disagrees with this QEMU; see each stage's vote-summary.txt)"
-  cat "$warnings"
-fi
-if [ $status -eq 0 ]; then
-  if [ "$nwarn" -gt 0 ]; then echo "TESTRIG GATE: PASS ($nwarn warnings)"; else echo "TESTRIG GATE: PASS"; fi
-else
-  echo "TESTRIG GATE: FAIL"
-fi
+nwarn=$(nwarnings)
+{
+  echo
+  echo "=== Summary ($(hms $SECONDS) in all)"
+  printf '  %-12s %-6s %8s  %s\n' stage result time notes
+  for s in $STAGES; do
+    if want "$s"; then
+      printf '  %-12s %-6s %8s  %s\n' "$s" "${result[$s]:-?}" "$(hms "${took[$s]:-0}")" "${note[$s]:-}"
+    else
+      printf '  %-12s %-6s %8s  %s\n' "$s" - "" "skipped: ${why[$s]}"
+    fi
+  done
+  if [ "$nwarn" -gt 0 ]; then
+    cp "$warnings" "$log_base.warnings.txt"
+    echo
+    echo "  $nwarn warnings: one reference disagrees with this QEMU, the other agrees."
+    # e.g. "     35  THREE-WAY VOTE  alliance-differs"
+    sed -E 's/^(.*): WARNING +([a-z-]+).*/\1  \2/' "$warnings" | sort | uniq -c | sed 's/^/  /'
+    echo "  Each is listed in $log_base.warnings.txt"
+  fi
+  echo
+  echo "  log: $log"
+  if [ $status -eq 0 ]; then
+    if [ "$nwarn" -gt 0 ]; then echo "TESTRIG GATE: PASS ($nwarn warnings)"; else echo "TESTRIG GATE: PASS"; fi
+  else
+    echo "TESTRIG GATE: FAIL ($(for s in $STAGES; do [ "${result[$s]:-}" = FAIL ] && printf '%s ' "$s"; done | sed 's/ $//') failed)"
+  fi
+}
+# Let tee finish writing the log before exiting.
+exec 1>&3 2>&4 3>&- 4>&-
+wait "$tee_pid" 2>/dev/null
 exit $status

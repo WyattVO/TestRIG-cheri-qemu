@@ -3,3 +3,4 @@
 !regressions/**/*.S
 random-failures/
 cheribsd-tests.log
+gate-logs/
