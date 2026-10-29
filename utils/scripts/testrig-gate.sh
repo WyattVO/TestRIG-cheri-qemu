@@ -99,8 +99,9 @@
 #             which the Sail model always implements)
 #   QCVENGINE path to the QCVEngine binary (default: newest cabal build)
 #   CROSS_CC  RISC-V cross compiler for the bench tests
-#   BENCH_MTTCG  "require": fail the bench tests' MTTCG runs on a QEMU without
-#             MTTCG for CHERI instead of skipping them (full-mttcg.conf)
+#   BENCH_MTTCG  the bench tests' MTTCG runs: "off" (default) skips them,
+#             "on" runs them where QEMU supports MTTCG for CHERI, "require"
+#             fails them on a QEMU without it (full-mttcg.conf)
 #   CHERIBSD_OUTPUT  cheribuild output directory with a riscv64-purecap
 #             CheriBSD disk image (stage 5)
 #   CHERIBSD_SMP  number of harts CheriBSD boots with (default: 1; QEMU

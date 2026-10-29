@@ -55,8 +55,8 @@ was an upstream bug.
 | 10.2 extensions | `amocas` with rd = x0 | `amocas-rd-x0` | the old memory value leaking into later uses of x0 (upstream QEMU bug; the port's CHERI cmpxchg avoided it by luck, fixed properly 2026-10-22) |
 | CHERI instructions | `fpclear` register clearing | `fpclear-registers`, trace 31 | `fpclear` missing, trapping with the FPU on, clearing the wrong registers, writing a NaN-boxed instead of a full zero, or getting `mstatus.FS` wrong |
 | Tags | Cache-block zero | `cbo-zero-cheri` | `cbo.zero` keeping tags |
-| Tags | Two harts, round-robin and MTTCG | `smp-tag-consistency`, `smp-tag-atomics` | a torn capability (tag on another hart's plain data, `amoswap.d` or `cbo.zero` result) |
-| Tags | MTTCG tag store (lock_tag) | `tags-concurrent-mode` | a store, AMO, LR/SC, CAS or `cbo.zero` path that skips the tag lock or keeps a tag; CLoadTags reading the lock bytes in the wrong order |
+| Tags | Two harts, round-robin and MTTCG (MTTCG runs opt-in: `BENCH_MTTCG=on`, or `full-mttcg.conf`) | `smp-tag-consistency`, `smp-tag-atomics` | a torn capability (tag on another hart's plain data, `amoswap.d` or `cbo.zero` result) |
+| Tags | MTTCG tag store (lock_tag; opt-in as above) | `tags-concurrent-mode` | a store, AMO, LR/SC, CAS or `cbo.zero` path that skips the tag lock or keeps a tag; CLoadTags reading the lock bytes in the wrong order |
 | Permissions | Store-conditional needs Store | `sc-store-permission`, traces 29, 30 | SC/`sc.c`/`amoswap.c` checking the wrong permission |
 | Permissions | DDC and capability authority for extension instructions | `ext-mem-insns-cheri`, `ext-mem-insns-capmode`, `xthead-mem-cheri`, `cbo-zero-cheri`, `cbo-inval-bounds` | an extension's load/store bypassing bounds or Store permission, in integer or capability mode |
 | Permissions | ASR | `asr-permission`, trace 20 | privileged CSRs/SCRs, `mret`, `cbo.inval` usable without ASR |

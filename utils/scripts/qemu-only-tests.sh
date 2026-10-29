@@ -8,9 +8,9 @@
 # (default rv64) and "# QEMU_SMP: <n>" the -smp value (default 1),
 # "# QEMU_ARGS: <args>" adds QEMU options (e.g. devices). "# QEMU_THREADS:
 # single multi" runs the test once per TCG thread mode (-accel
-# tcg,thread=...; reported as name[mode]): round-robin and MTTCG. A QEMU
-# that warns its guest is "not yet converted to MTTCG" (no MTTCG for CHERI)
-# reports the multi run as skipped. "# QEMU_VERSION: >=<x.y>" runs the test only on
+# tcg,thread=...; reported as name[mode]): round-robin and MTTCG. The MTTCG
+# runs are optional (BENCH_MTTCG); a QEMU that warns its guest is "not yet
+# converted to MTTCG" (no MTTCG for CHERI) reports them as skipped. "# QEMU_VERSION: >=<x.y>" runs the test only on
 # QEMU x.y or later (for extensions a QEMU rebase added; older QEMUs report it
 # as skipped). A "# XFAIL: <reason>" line marks a known failure: it is
 # reported but does not fail the run, and passing is reported as XPASS (then
@@ -22,9 +22,16 @@
 #   CROSS_CC  RISC-V cross compiler (default: riscv64-linux-gnu-gcc)
 #   BENCH_INCLUDE  regex of test names (file name without .S) to run
 #   BENCH_EXCLUDE  regex of test names to skip
-#   BENCH_MTTCG  "require": a skipped multi run fails instead (for a QEMU
-#             that must support MTTCG)
+#   BENCH_MTTCG  whether QEMU_THREADS tests also run under MTTCG: "off"
+#             (default) skips the multi runs, "on" runs them (skipped on a
+#             QEMU without MTTCG for CHERI), "require" runs them and fails a
+#             skipped one (for a QEMU that must support MTTCG)
 set -u
+
+case ${BENCH_MTTCG:=off} in
+  off|on|require) ;;
+  *) echo "error: BENCH_MTTCG must be off, on or require, not $BENCH_MTTCG" >&2; exit 2 ;;
+esac
 
 here=$(cd "$(dirname "$0")" && pwd)
 dir=$(cd "$here/../../regressions/qemu-only" && pwd)
@@ -48,7 +55,7 @@ run() {
     -serial none "$@"; exit $?) >"$tmp/$name.log" 2>&1
   rc=$?
   if grep -q "not yet converted to MTTCG" "$tmp/$name.log"; then
-    if [ "${BENCH_MTTCG:-}" = require ]; then
+    if [ "$BENCH_MTTCG" = require ]; then
       echo "FAIL: $name: this QEMU has no MTTCG for CHERI (BENCH_MTTCG=require)"
       status=1
     else
@@ -100,6 +107,10 @@ for src in "$dir"/*.S; do
     run "$name" "$src" "$cpu" "$smp" "$xfail" $args
   else
     for mode in $threads; do
+      if [ "$mode" = multi ] && [ "$BENCH_MTTCG" = off ]; then
+        echo "skipped: $name[multi] (MTTCG runs off, set BENCH_MTTCG=on)"
+        continue
+      fi
       # shellcheck disable=SC2086
       run "$name[$mode]" "$src" "$cpu" "$smp" "$xfail" -accel "tcg,thread=$mode" $args
     done

@@ -145,7 +145,7 @@ cannot compare them. CHERI instructions are written with `.insn` (see
 | `pcc-bounds-cached-tb.S` | Code first translated under the full PCC still has its fetches checked when later run under a PCC covering one instruction (PCC bounds are part of QEMU's translation cache key) |
 | `data-endianness-fixed.S` | `mstatus` MBE/SBE/UBE stay 0 and data accesses stay little-endian (one capability memory format) |
 
-A `# QEMU_SMP: <n>` line gives the `-smp` value, and `# QEMU_ARGS: <args>` adds QEMU options (devices). `# QEMU_THREADS: single multi` runs a test under round-robin TCG and under MTTCG (reported as `name[single]`, `name[multi]`); on a QEMU without MTTCG for CHERI (it warns "Guest not yet converted to MTTCG") the multi run is skipped, or fails with `BENCH_MTTCG=require` (`full-mttcg.conf`). A `# QEMU_VERSION: >=<x.y>` line runs a test only on QEMU x.y or later (older QEMUs report it as skipped), for extensions a newer QEMU added. A `# XFAIL: <reason>` line marks a test that is known to fail; it is
+A `# QEMU_SMP: <n>` line gives the `-smp` value, and `# QEMU_ARGS: <args>` adds QEMU options (devices). `# QEMU_THREADS: single multi` runs a test under round-robin TCG and, optionally, under MTTCG (reported as `name[single]`, `name[multi]`). The MTTCG runs are off by default; `BENCH_MTTCG=on` includes them (skipped on a QEMU without MTTCG for CHERI, which warns "Guest not yet converted to MTTCG") and `BENCH_MTTCG=require` fails them there (`full-mttcg.conf`). A `# QEMU_VERSION: >=<x.y>` line runs a test only on QEMU x.y or later (older QEMUs report it as skipped), for extensions a newer QEMU added. A `# XFAIL: <reason>` line marks a test that is known to fail; it is
 reported as `xfail` and does not fail the gate (`XPASS` when it starts
 passing). `cheri-v9.h` has shared macros for these tests, including an
 expected-trap handler (`check`, `trap_expect`, `expected_trap_handler`).
@@ -164,8 +164,9 @@ The port with CHERI-Alliance's lock_tag series (branch `cheri-10.2-mttcg`)
 enables MTTCG for CHERI-RISC-V: with more than one possible hart
 (`max_cpus > 1`) every tag sits in a lock byte that generated code holds
 across each store, AMO and compare-and-swap. The three tests above run under
-both TCG modes there, and `utils/gate-profiles/full-mttcg.conf` requires the
-MTTCG runs (`BENCH_MTTCG=require`) and boots CheriBSD with four harts
+both TCG modes there with `BENCH_MTTCG=on` (by default only their
+round-robin runs are included), and `utils/gate-profiles/full-mttcg.conf`
+requires the MTTCG runs (`BENCH_MTTCG=require`) and boots CheriBSD with four harts
 (`CHERIBSD_SMP=4`). `cheribsd-tests.py --smp N` boots CheriBSD with N harts
 for the kernel's SMP paths (on that branch, N host threads). The plugin
 comparison (`upstream-diff.py`) runs with `thread=single`: under MTTCG the
