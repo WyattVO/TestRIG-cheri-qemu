@@ -110,8 +110,14 @@
 #             fails them on a QEMU without it (full-mttcg.conf)
 #   CHERIBSD_OUTPUT  cheribuild output directory with a riscv64-purecap
 #             CheriBSD disk image (stage 5)
-#   CHERIBSD_SMP  number of harts CheriBSD boots with (default: 1; QEMU
-#             runs them with MTTCG when it supports MTTCG for CHERI)
+#   CHERIBSD_SMP  number of harts CheriBSD boots with (default: 1; they run
+#             round-robin on one host thread unless CHERIBSD_MTTCG asks
+#             otherwise)
+#   CHERIBSD_MTTCG  whether CheriBSD's harts run under MTTCG: "off" (default)
+#             does not ask for it, "on" asks and reports which mode ran,
+#             "require" asks and fails stage 5 unless it really ran
+#             (full-mttcg.conf). MTTCG is opt-in on the port, so a run that
+#             does not ask for it gets round-robin however many harts it has.
 #   CHERIBSD_LOG  CheriBSD console log (default: next to the run's log)
 #   GATE_LOG_DIR  where each run's log is saved (default: gate-logs/)
 #   ALLIANCE_QEMU  CHERI-Alliance qemu-system-riscv64xcheri with RVFI-DII
@@ -295,7 +301,7 @@ if [ $list_only -eq 0 ]; then
   echo "  TestRIG:  branch $rig_branch, commit $rig_rev"
   echo "  host:     $(uname -srm), $(nproc) CPUs, $(sed -n 's/^model name[^:]*: //p' /proc/cpuinfo | head -1)"
   echo "  seed:     $seed ($ntests tests per template)"
-  echo "  settings: BENCH_MTTCG=${BENCH_MTTCG:-off} CHERIBSD_SMP=${CHERIBSD_SMP:-1}"
+  echo "  settings: BENCH_MTTCG=${BENCH_MTTCG:-off} CHERIBSD_SMP=${CHERIBSD_SMP:-1} CHERIBSD_MTTCG=${CHERIBSD_MTTCG:-off}"
   echo "  log:      $log"
 fi
 
@@ -593,12 +599,17 @@ if want cheribsd; then
   stage_begin cheribsd
   echo "=== CheriBSD tests"
   python3 -u "$here/cheribsd-tests.py" "$qemu" "$CHERIBSD_OUTPUT" \
-    --smp "${CHERIBSD_SMP:-1}" --log "${CHERIBSD_LOG:-$log_base.cheribsd.log}" |
+    --smp "${CHERIBSD_SMP:-1}" --mttcg "${CHERIBSD_MTTCG:-off}" \
+    --log "${CHERIBSD_LOG:-$log_base.cheribsd.log}" |
     tee "$tmp/cheribsd.out"
   [ "${PIPESTATUS[0]}" -eq 0 ] || status=1
-  # e.g. "purecap 305 passed, 10 xfail; hybrid 149 passed, 52 xfail; 4 harts"
+  # e.g. "purecap 305 passed, 10 xfail; hybrid 149 passed, 52 xfail; 4 harts,
+  # MTTCG: multi, 4 vCPU threads". The mode is what cheribsd-tests.py read
+  # back off the running QEMU, not what it was asked for.
   note[cheribsd]="$(sed -nE 's/^cheribsdtest-([a-z]+): passed ([0-9]+), expectedly failed ([0-9]+).*/\1 \2 passed, \3 xfail/p' \
     "$tmp/cheribsd.out" | paste -sd';' | sed 's/;/; /g'); ${CHERIBSD_SMP:-1} harts"
+  cheribsd_mode=$(sed -n 's/^MTTCG: /MTTCG: /p' "$tmp/cheribsd.out" | head -1)
+  [ -z "$cheribsd_mode" ] || note[cheribsd]="${note[cheribsd]}, $cheribsd_mode"
   stage_end
 fi
 

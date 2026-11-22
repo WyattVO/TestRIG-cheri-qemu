@@ -8,7 +8,8 @@ failures (expected failures, XFAIL, are fine). The disk image is opened with
 snapshot=on, so it is never modified.
 
 Usage: cheribsd-tests.py <qemu-system-riscv64xcheri> <cheribuild-output-dir>
-                         [--log FILE] [--suite NAME ...]
+                         [--log FILE] [--suite NAME ...] [--smp N]
+                         [--mttcg off|on|require]
 
 <cheribuild-output-dir> is cheribuild's output root (it contains
 cheribsd-riscv64-purecap.img, rootfs-riscv64-purecap/ and sdk/).
@@ -20,6 +21,9 @@ import re
 import select
 import sys
 import time
+
+from cheribsd_mttcg import SETTINGS, check_mode, qemu_accel_args
+from qemu_mode import vcpu_thread_mode
 
 PROMPT = rb"root@[^:]*:~ # $"
 
@@ -75,8 +79,13 @@ def main():
     p.add_argument("--log", default="cheribsd-tests.log",
                    help="console log (default: %(default)s)")
     p.add_argument("--smp", type=int, default=1,
-                   help="number of harts (default: %(default)s; QEMU runs them "
-                   "with MTTCG if it supports MTTCG for CHERI, else round-robin)")
+                   help="number of harts (default: %(default)s; they run "
+                   "round-robin on one host thread unless --mttcg asks "
+                   "otherwise)")
+    p.add_argument("--mttcg", choices=SETTINGS, default="off",
+                   help="run the harts under MTTCG: \"off\" (default) does "
+                   "not ask for it, \"on\" asks and reports what ran, "
+                   "\"require\" asks and fails unless it really ran")
     p.add_argument("--suite", action="append",
                    help="cheribsdtest binary to run (default: purecap and hybrid)")
     args = p.parse_args()
@@ -97,12 +106,26 @@ def main():
             "-bios", files["bios"], "-kernel", files["kernel"],
             "-drive", "if=none,file=%s,id=drv,format=raw,snapshot=on" % files["disk"],
             "-device", "virtio-blk-device,drive=drv",
-            "-device", "virtio-rng-pci"]
+            "-device", "virtio-rng-pci",
+            # Without this QEMU leaves every thread named after the binary
+            # and the accelerator mode cannot be read back from /proc.
+            "-name", "debug-threads=on"]
+    argv += qemu_accel_args(args.mttcg)
     status = 0
     with open(args.log, "wb", buffering=0) as log:
+        log.write(b"QEMU argv: " + " ".join(argv).encode() + b"\n")
         con = Console(argv, log)
         try:
             con.expect(rb"login: ", 3600)
+            # QEMU is up: read the mode it actually started in. A QEMU that
+            # refused unsafe MTTCG has already exited, and Console.expect
+            # reports that instead of waiting out the login timeout.
+            mode, count = vcpu_thread_mode("/proc/%d/task" % con.pid)
+            ok, detail = check_mode(args.mttcg, mode, count, args.smp)
+            if detail:
+                print("MTTCG: %s" % detail)
+            if not ok:
+                status = 1
             os.write(con.fd, b"root\r")
             con.expect(PROMPT, 600)
             for suite in suites:
