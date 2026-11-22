@@ -148,35 +148,50 @@ cannot compare them. CHERI instructions are written with `.insn` (see
 | `pcc-bounds-cached-tb.S` | Code first translated under the full PCC still has its fetches checked when later run under a PCC covering one instruction (PCC bounds are part of QEMU's translation cache key) |
 | `data-endianness-fixed.S` | `mstatus` MBE/SBE/UBE stay 0 and data accesses stay little-endian (one capability memory format) |
 
-A `# QEMU_SMP: <n>` line gives the `-smp` value, and `# QEMU_ARGS: <args>` adds QEMU options (devices). `# QEMU_THREADS: single multi` runs a test under round-robin TCG and, optionally, under MTTCG (reported as `name[single]`, `name[multi]`). The MTTCG runs are off by default; `BENCH_MTTCG=on` includes them (skipped on a QEMU without MTTCG for CHERI, which warns "Guest not yet converted to MTTCG") and `BENCH_MTTCG=require` fails them there (`full-mttcg.conf`). A `# QEMU_VERSION: >=<x.y>` line runs a test only on QEMU x.y or later (older QEMUs report it as skipped), for extensions a newer QEMU added. A `# XFAIL: <reason>` line marks a test that is known to fail; it is
+A `# QEMU_SMP: <n>` line gives the `-smp` value, and `# QEMU_ARGS: <args>` adds QEMU options (devices). `# QEMU_THREADS: single multi` runs a test under round-robin TCG and, optionally, under MTTCG (reported as `name[single]`, `name[multi]`). The MTTCG runs are off by default; `BENCH_MTTCG=on` includes them (skipped on a QEMU without MTTCG for CHERI, which warns "Guest not yet converted to MTTCG") and `BENCH_MTTCG=require` fails them there (`full-mttcg.conf`). These runs pass `-accel tcg,thread=multi` themselves, so they do not depend on the QEMU's default accelerator mode — on this port MTTCG is opt-in (see [SMP and MTTCG](#smp-and-mttcg)). A `# QEMU_VERSION: >=<x.y>` line runs a test only on QEMU x.y or later (older QEMUs report it as skipped), for extensions a newer QEMU added. A `# XFAIL: <reason>` line marks a test that is known to fail; it is
 reported as `xfail` and does not fail the gate (`XPASS` when it starts
 passing). `cheri-v9.h` has shared macros for these tests, including an
 expected-trap handler (`check`, `trap_expect`, `expected_trap_handler`).
 
 ### SMP and MTTCG
 
-CHERI-QEMU 10.2 runs CHERI harts round-robin on one host thread (it does
-not enable MTTCG for CHERI targets). With `-accel tcg,thread=multi`, it warns
-that CHERI tags are not thread-safe, and that is real:
-`smp-tag-consistency.S` then fails check 1 every time (hart 0 loads a tagged
-capability made of hart 1's plain data, i.e. a forged capability),
-`smp-tag-atomics.S` too, `tags-concurrent-mode.S` fails check 6, and any
-`cbo.zero` aborts QEMU (an assertion in `do_cbo_zero`).
+The port carries CHERI-Alliance's lock_tag series, so CHERI-RISC-V runs
+under MTTCG — but it is opt-in, not the default. Without
+`-accel tcg,thread=multi` every hart runs round-robin on one host thread
+however many `-smp` you give. With it, and more than one possible hart
+(`max_cpus > 1`), every tag sits in a lock byte that generated code holds
+across each store, AMO and compare-and-swap.
 
-The port with CHERI-Alliance's lock_tag series (branch `cheri-10.2-mttcg`)
-enables MTTCG for CHERI-RISC-V: with more than one possible hart
-(`max_cpus > 1`) every tag sits in a lock byte that generated code holds
-across each store, AMO and compare-and-swap. The three tests above run under
-both TCG modes there with `BENCH_MTTCG=on` (by default only their
-round-robin runs are included), and `utils/gate-profiles/full-mttcg.conf`
-requires the MTTCG runs (`BENCH_MTTCG=require`) and boots CheriBSD with four harts
-(`CHERIBSD_SMP=4`). CHERI-Alliance QEMU has no MTTCG to compare with, so that
-profile leaves it out (no vote, no gate self-test; Sail is the only reference
-for the traces); `full.conf` still runs the Alliance comparison. `cheribsd-tests.py --smp N` boots CheriBSD with N harts
-for the kernel's SMP paths (on that branch, N host threads). The plugin
-comparison (`upstream-diff.py`) runs with `thread=single`: under MTTCG the
-execlog plugin reads CSRs before reset, when the CHERI PCC has no ASR, and
-asserts.
+**Why it is opt-in, and what it was like before the lock_tag series.** A
+CHERI QEMU without lock_tag ran harts round-robin and warned on
+`-accel tcg,thread=multi` that CHERI tags are not thread-safe. That warning
+was real: `smp-tag-consistency.S` failed check 1 every time (hart 0 loads a
+tagged capability made of hart 1's plain data, i.e. a forged capability),
+`smp-tag-atomics.S` too, `tags-concurrent-mode.S` failed check 6, and any
+`cbo.zero` aborted QEMU (an assertion in `do_cbo_zero`). On this port those
+races are fixed under MTTCG, and `cheri_tag_init` now refuses to start a
+multi-CPU machine on a target that still lacks lock_tag (CHERI-ARM) rather
+than warning and running anyway. One thing round-robin keeps: the DMA tag
+locking is conditional on MTTCG being on, so the device-vs-vCPU tag race
+that `smp-dma-tag-race.S` covers is only closed under MTTCG.
+
+**In the gate.** The `QEMU_THREADS` tests pass the accelerator flag
+themselves, so they are unaffected by the default: their MTTCG runs are off
+until `BENCH_MTTCG=on` includes them (skipped on a QEMU without MTTCG for
+CHERI, which warns "Guest not yet converted to MTTCG") and
+`BENCH_MTTCG=require` fails them there. CheriBSD is different — it has to be
+told: `utils/gate-profiles/full-mttcg.conf` sets `CHERIBSD_SMP=4` *and*
+`CHERIBSD_MTTCG=require`, and `cheribsd-tests.py` then reads the mode back
+off the running QEMU (vCPU threads named `CPU <n>/TCG` under MTTCG versus a
+single `ALL CPUs/TCG`) and fails the stage if the harts turn out to have run
+round-robin. `full.conf` asks for neither, so it runs round-robin
+throughout, which is what its recorded results describe.
+
+CHERI-Alliance QEMU has no MTTCG to compare with, so `full-mttcg.conf`
+leaves it out (no vote, no gate self-test; Sail is the only reference for the
+traces); `full.conf` still runs the Alliance comparison. The plugin
+comparison (`upstream-diff.py`) pins `thread=single`: under MTTCG the execlog
+plugin reads CSRs before reset, when the CHERI PCC has no ASR, and asserts.
 
 Each new test was checked against a deliberately broken QEMU (2026-10-19):
 `cbo.zero` without tag invalidation fails `cbo-zero-cheri` check 1, and

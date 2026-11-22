@@ -78,7 +78,7 @@ was an upstream bug.
 | 10.2 extensions | Functional results | `ext-functional` | a port breaking Zicond, Zfh, Zfa, Zcb, Zbkb, Zimop, Zawrs, Sstc, Zicbop, Zicntr |
 | 11.0 extensions | Zalasr under CHERI | `zalasr-cheri` (QEMU 11.0+) | load-acquire/store-release bypassing DDC bounds or Store permission, keeping tags, being usable in capability mode, or a load into x0 changing x0 (upstream QEMU 11.0.0 bug, fixed in the port) |
 | 11.0 extensions | Functional results | `ext-functional-11` (QEMU 11.0+) | a port breaking XMIPSCMOV (or leaving a tag on its result), XMIPSCBOP prefetches faulting, or Smpmpmt's memory-type bits changing PMP permissions |
-| System | Whole OS | stage 5: `cheribsdtest` purecap and hybrid, `CHERIBSD_SMP=N` for SMP (`full-mttcg.conf`: 4 harts on 4 host threads) | anything above, end to end; under MTTCG, the page walker's A/D/CD updates and the revoker's CLoadTags |
+| System | Whole OS | stage 5: `cheribsdtest` purecap and hybrid, `CHERIBSD_SMP=N` for SMP, `CHERIBSD_MTTCG=require` to run those harts under MTTCG and fail the stage if they did not (`full-mttcg.conf`: both, so 4 harts on 4 host threads) | anything above, end to end; under MTTCG, the page walker's A/D/CD updates and the revoker's CLoadTags |
 
 ## How each test was proven to work
 
@@ -137,13 +137,18 @@ against a QEMU where the behaviour it checks is broken, and failed:
   `lr.c.cap` is not generated while the Sail model mishandles it
   (`regressions/coverage-required.txt` lists every coverage gap).
 
-- MTTCG (lock_tag branch): no bare-metal test races the page walker's
-  A/D/CD update against a capability store (CheriBSD on 4 harts covers it).
-  Device writes are atomic with their tag clears under MTTCG only (tag
+- MTTCG: the port carries the lock_tag series, but MTTCG is opt-in
+  (`-accel tcg,thread=multi`; the gate asks for it with `BENCH_MTTCG` and
+  `CHERIBSD_MTTCG`), so the default mode is round-robin and `full.conf` never
+  exercises the tag locks. No bare-metal test races the page walker's A/D/CD
+  update against a capability store (CheriBSD on 4 harts under MTTCG covers
+  it). Device writes are atomic with their tag clears under MTTCG only (tag
   locks, bounce buffers); round-robin TCG has no tag locks, so a block
   device's worker thread writing a mapped buffer can still race a hart that
-  loads a capability from that buffer during the I/O. Morello has no MTTCG
-  (QEMU refuses `-accel tcg,thread=multi` with more than one CPU).
+  loads a capability from that buffer during the I/O — which means the DMA
+  result is MTTCG-qualified, and `smp-dma-tag-race` (MTTCG-only) is skipped
+  by any profile that does not ask for MTTCG. Morello has no MTTCG (QEMU
+  refuses `-accel tcg,thread=multi` with more than one CPU).
 - `riscv64cheristd` (CHERI 0.9.3 standard) has no bench or CheriBSD run.
 - Vector and hypervisor are refused on CHERI; `disabled-ext-inert` checks they
   stay off. Testing them for real needs a CHERI-aware implementation first.
@@ -155,3 +160,9 @@ against a QEMU where the behaviour it checks is broken, and failed:
   CheriBSD built for it.
 - MTTCG on QEMU without the lock_tag series: not a test gap but a design
   limit of its CHERI tags (see `regressions/README.md`, SMP and MTTCG).
+
+Which mode a run used is recorded, not assumed: the gate's run header prints
+`BENCH_MTTCG` and `CHERIBSD_MTTCG`, the bench names each test `[single]` or
+`[multi]`, and stage 5's note carries the mode `cheribsd-tests.py` read back
+off the running QEMU (`MTTCG: multi, 4 vCPU threads`) rather than the mode it
+asked for.
