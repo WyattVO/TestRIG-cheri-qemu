@@ -529,18 +529,24 @@ if want random; then
   rig -n "$ntests" --seed "$seed" -S "$save_dir" --continue-on-fail \
     --stats-file "$stats" "${template_args[@]}"
   rig_status=$?
+  # Only the counter-examples this run saved count. Earlier runs leave theirs
+  # in SAVE_DIR (they are kept as evidence), and a stale one must not fail
+  # every later run; a bug that has to keep failing belongs in
+  # regressions/open-bugs/ instead. With no old failures the pattern file is
+  # empty, so grep -vxF passes every line through.
+  ls "$save_dir"/failure-*.S 2>/dev/null | grep -vxF -f "$tmp/old-failures" \
+    >"$tmp/new-failure-list"
   if [ -z "$second_ref" ]; then
     [ $rig_status -eq 0 ] || status=1
-    if ls "$save_dir"/failure-*.S >/dev/null 2>&1; then
-      echo "FAIL: failing random tests saved in ${save_dir#$root/}/ (rerun with SEED=$seed)"
+    if [ -s "$tmp/new-failure-list" ]; then
+      echo "FAIL: $(wc -l <"$tmp/new-failure-list") failing random tests saved in ${save_dir#$root/}/ (rerun with SEED=$seed)"
       status=1
     fi
   else
     # This run's Sail failures, judged by Alliance as well.
     new=$tmp/new-failures
     mkdir -p "$new"
-    ls "$save_dir"/failure-*.S 2>/dev/null | grep -vxF -f "$tmp/old-failures" |
-      xargs -r ln -s -t "$new"
+    xargs -r ln -s -t "$new" <"$tmp/new-failure-list"
     if ls "$new"/*.S >/dev/null 2>&1; then
       echo "Random tests differ from Sail ($(ls "$new" | wc -l) traces); replaying on CHERI-Alliance QEMU (rerun with SEED=$seed)"
       judge "RANDOM vs both references" "$save_dir/random-$seed-judged" "$new" \
