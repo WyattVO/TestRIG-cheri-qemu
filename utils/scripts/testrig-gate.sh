@@ -76,6 +76,14 @@
 #                       command line win. Examples: utils/gate-profiles/
 #   --list              print the plan and exit
 #   --warnings-fatal    fail on WARNINGs too (one reference disagrees)
+#   --mttcg MODE        the thread mode of the stages that depend on it
+#                       (bench, cheribsd): "off", "on" or "require" as the
+#                       variables below, or "both" to run each of those two
+#                       stages twice in one run, once round-robin and once
+#                       under MTTCG. The other stages do not depend on the
+#                       thread mode and still run once. A second pass is
+#                       reported as its own summary row, bench-mttcg and
+#                       cheribsd-mttcg.
 # Turning off individual tests (regular expressions on names):
 #   --templates RE      random-test templates to run (stages 4 and 4b)
 #   --exclude RE        random-test templates to skip (stages 4 and 4b)
@@ -94,6 +102,13 @@
 #   WARNINGS_FATAL=1  as --warnings-fatal
 #   TEMPLATES, EXCLUDE   as --templates, --exclude (EXCLUDE default: none)
 #   BENCH_INCLUDE, BENCH_EXCLUDE, TRACE_EXCLUDE, UPSTREAM_SUITES  as above
+#   NTESTS    tests per template when the command line does not give one
+#             (default: 100), so that a profile can choose it
+#   MTTCG     as --mttcg. It sets BENCH_MTTCG and CHERIBSD_MTTCG together
+#             (and CHERIBSD_SMP to 4 where it asks for MTTCG), and "both"
+#             runs bench and cheribsd twice. Unset, the default, leaves the
+#             three variables below exactly as they are given, which is what
+#             the profiles written before --mttcg rely on.
 #   SEED      seed for the random tests (default: from the clock)
 #   SAVE_DIR  where failing random tests are saved (default: random-failures/)
 #   GATE_KILL_STRAYS=1  reap QEMU processes left over from an earlier run
@@ -169,6 +184,7 @@ while [ $# -gt 0 ]; do
     --trace-exclude) opt[TRACE_EXCLUDE]=$2; shift ;;
     --vote-exclude) opt[VOTE_EXCLUDE]=$2; shift ;;
     --suites) opt[UPSTREAM_SUITES]=$2; shift ;;
+    --mttcg) opt[MTTCG]=$2; shift ;;
     --alliance) opt[ALLIANCE_QEMU]=$2; shift ;;
     --upstream-build) opt[UPSTREAM_BUILD]=$2; shift ;;
     --arch-test) opt[ARCH_TEST]=$2; shift ;;
@@ -191,9 +207,31 @@ fi
 for k in "${!opt[@]}"; do printf -v "$k" '%s' "${opt[$k]}"; done
 
 qemu=${positional[0]:-}
-ntests=${positional[1]:-100}
+ntests=${positional[1]:-${NTESTS:-100}}
 [ -n "$qemu" ] || usage
 arch=${ARCH:-rv64imsafdcZicsr_Zifencei_Xcheri}
+
+# How the two stages that depend on the thread mode (bench, cheribsd) run.
+# Each pass is "<suffix> <BENCH_MTTCG> <CHERIBSD_SMP> <CHERIBSD_MTTCG>", and a
+# single pass takes the suffix "." (read as empty below) so that its summary
+# row, its notes and its CheriBSD log keep the names they have always had.
+# Passing the settings per pass rather than exporting them keeps one pass from
+# leaking into the next.
+mode_passes=()
+case ${MTTCG-} in
+  "")   mode_passes=(". ${BENCH_MTTCG:-off} ${CHERIBSD_SMP:-1} ${CHERIBSD_MTTCG:-off}") ;;
+  off)  mode_passes=(". off ${CHERIBSD_SMP:-1} off") ;;
+  on|require)
+        mode_passes=(". $MTTCG ${CHERIBSD_SMP:-4} $MTTCG") ;;
+  both) mode_passes=(". off 1 off" "-mttcg require ${CHERIBSD_SMP:-4} require") ;;
+  *) echo "error: --mttcg takes off, on, require or both (got $MTTCG)" >&2; exit 2 ;;
+esac
+# read_pass <pass>: set suffix, pass_bench_mttcg, pass_smp, pass_mttcg.
+read_pass() {
+  read -r suffix pass_bench_mttcg pass_smp pass_mttcg <<<"$1"
+  [ "$suffix" = . ] && suffix=
+  return 0
+}
 csr_exclude=${CSR_EXCLUDE-^(misa|mstatus|sstatus|mscratch|sscratch|mip|mie|mideleg|medeleg|sccsr|mhpmevent[0-9]+|m?cycleh?|m?instreth?|timeh?|m?hpmcounter[0-9]+h?|reserved)\$}
 templates=${TEMPLATES-}
 exclude=${EXCLUDE-}
@@ -309,7 +347,10 @@ if [ $list_only -eq 0 ]; then
   echo "  TestRIG:  branch $rig_branch, commit $rig_rev"
   echo "  host:     $(uname -srm), $(nproc) CPUs, $(sed -n 's/^model name[^:]*: //p' /proc/cpuinfo | head -1)"
   echo "  seed:     $seed ($ntests tests per template)"
-  echo "  settings: BENCH_MTTCG=${BENCH_MTTCG:-off} CHERIBSD_SMP=${CHERIBSD_SMP:-1} CHERIBSD_MTTCG=${CHERIBSD_MTTCG:-off}"
+  for pass in "${mode_passes[@]}"; do
+    read_pass "$pass"
+    echo "  settings: ${suffix:+${suffix#-} pass: }BENCH_MTTCG=$pass_bench_mttcg CHERIBSD_SMP=$pass_smp CHERIBSD_MTTCG=$pass_mttcg"
+  done
   echo "  log:      $log"
 fi
 
@@ -332,12 +373,18 @@ echo "=== Plan (QEMU ${qemu}, $ntests tests per template)"
 plan_error=0
 for s in $STAGES; do
   if want "$s"; then
-    printf '  %-12s run\n' "$s"
+    # bench and cheribsd are the stages the thread mode changes, so they are
+    # the ones --mttcg both runs twice.
+    if [ ${#mode_passes[@]} -gt 1 ] && [[ " bench cheribsd " == *" $s "* ]]; then
+      printf '  %-14s run twice: round-robin, then MTTCG\n' "$s"
+    else
+      printf '  %-14s run\n' "$s"
+    fi
   else
     if [[ ${why[$s]} == error:* ]]; then
-      printf '  %-12s ERROR: %s\n' "$s" "${why[$s]#error: }"; plan_error=1
+      printf '  %-14s ERROR: %s\n' "$s" "${why[$s]#error: }"; plan_error=1
     else
-      printf '  %-12s skip: %s\n' "$s" "${why[$s]}"
+      printf '  %-14s skip: %s\n' "$s" "${why[$s]}"
     fi
   fi
 done
@@ -556,13 +603,16 @@ if want selftest; then
 fi
 
 if want bench; then
-  stage_begin bench
-  echo "=== QEMU-only tests"
-  BENCH_INCLUDE=${BENCH_INCLUDE-} BENCH_EXCLUDE=${BENCH_EXCLUDE-} BENCH_MTTCG=${BENCH_MTTCG-} \
-    "$here/qemu-only-tests.sh" "$qemu" | tee "$tmp/bench.out"
-  [ "${PIPESTATUS[0]}" -eq 0 ] || status=1
-  note[bench]=$(sed -n 's/^bench: //p' "$tmp/bench.out")
-  stage_end
+  for pass in "${mode_passes[@]}"; do
+    read_pass "$pass"
+    stage_begin "bench$suffix"
+    echo "=== QEMU-only tests (BENCH_MTTCG=$pass_bench_mttcg)"
+    BENCH_INCLUDE=${BENCH_INCLUDE-} BENCH_EXCLUDE=${BENCH_EXCLUDE-} BENCH_MTTCG=$pass_bench_mttcg \
+      "$here/qemu-only-tests.sh" "$qemu" | tee "$tmp/bench$suffix.out"
+    [ "${PIPESTATUS[0]}" -eq 0 ] || status=1
+    note[bench$suffix]=$(sed -n 's/^bench: //p' "$tmp/bench$suffix.out")
+    stage_end
+  done
 fi
 
 if want random; then
@@ -635,21 +685,28 @@ if want vote; then
 fi
 
 if want cheribsd; then
-  stage_begin cheribsd
-  echo "=== CheriBSD tests"
-  python3 -u "$here/cheribsd-tests.py" "$qemu" "$CHERIBSD_OUTPUT" \
-    --smp "${CHERIBSD_SMP:-1}" --mttcg "${CHERIBSD_MTTCG:-off}" \
-    --log "${CHERIBSD_LOG:-$log_base.cheribsd.log}" |
-    tee "$tmp/cheribsd.out"
-  [ "${PIPESTATUS[0]}" -eq 0 ] || status=1
+  for pass in "${mode_passes[@]}"; do
+    read_pass "$pass"
+    stage_begin "cheribsd$suffix"
+    echo "=== CheriBSD tests ($pass_smp harts, CHERIBSD_MTTCG=$pass_mttcg)"
+    # A second pass must not write over the first pass's console log, whether
+    # the name comes from CHERIBSD_LOG or from the run's own log name.
+    cheribsd_log=${CHERIBSD_LOG:-$log_base.cheribsd.log}
+    [ -z "$suffix" ] || cheribsd_log=${cheribsd_log%.log}$suffix.log
+    python3 -u "$here/cheribsd-tests.py" "$qemu" "$CHERIBSD_OUTPUT" \
+      --smp "$pass_smp" --mttcg "$pass_mttcg" \
+      --log "$cheribsd_log" |
+      tee "$tmp/cheribsd$suffix.out"
+    [ "${PIPESTATUS[0]}" -eq 0 ] || status=1
   # e.g. "purecap 305 passed, 10 xfail; hybrid 149 passed, 52 xfail; 4 harts,
   # MTTCG: multi, 4 vCPU threads". The mode is what cheribsd-tests.py read
   # back off the running QEMU, not what it was asked for.
-  note[cheribsd]="$(sed -nE 's/^cheribsdtest-([a-z]+): passed ([0-9]+), expectedly failed ([0-9]+).*/\1 \2 passed, \3 xfail/p' \
-    "$tmp/cheribsd.out" | paste -sd';' | sed 's/;/; /g'); ${CHERIBSD_SMP:-1} harts"
-  cheribsd_mode=$(sed -n 's/^MTTCG: /MTTCG: /p' "$tmp/cheribsd.out" | head -1)
-  [ -z "$cheribsd_mode" ] || note[cheribsd]="${note[cheribsd]}, $cheribsd_mode"
-  stage_end
+    note[cheribsd$suffix]="$(sed -nE 's/^cheribsdtest-([a-z]+): passed ([0-9]+), expectedly failed ([0-9]+).*/\1 \2 passed, \3 xfail/p' \
+      "$tmp/cheribsd$suffix.out" | paste -sd';' | sed 's/;/; /g'); $pass_smp harts"
+    cheribsd_mode=$(sed -n 's/^MTTCG: /MTTCG: /p' "$tmp/cheribsd$suffix.out" | head -1)
+    [ -z "$cheribsd_mode" ] || note[cheribsd$suffix]="${note[cheribsd$suffix]}, $cheribsd_mode"
+    stage_end
+  done
 fi
 
 if want upstream; then
@@ -672,12 +729,17 @@ nwarn=$(nwarnings)
 {
   echo
   echo "=== Summary ($(hms $SECONDS) in all)"
-  printf '  %-12s %-6s %8s  %s\n' stage result time notes
+  printf '  %-14s %-6s %8s  %s\n' stage result time notes
   for s in $STAGES; do
     if want "$s"; then
-      printf '  %-12s %-6s %8s  %s\n' "$s" "${result[$s]:-?}" "$(hms "${took[$s]:-0}")" "${note[$s]:-}"
+      # One row per pass that ran: "bench" and, with --mttcg both,
+      # "bench-mttcg" after it.
+      for key in "$s" "$s-mttcg"; do
+        [ -n "${result[$key]:-}" ] || continue
+        printf '  %-14s %-6s %8s  %s\n' "$key" "${result[$key]}" "$(hms "${took[$key]:-0}")" "${note[$key]:-}"
+      done
     else
-      printf '  %-12s %-6s %8s  %s\n' "$s" - "" "skipped: ${why[$s]}"
+      printf '  %-14s %-6s %8s  %s\n' "$s" - "" "skipped: ${why[$s]}"
     fi
   done
   if [ "$nwarn" -gt 0 ]; then
@@ -693,7 +755,8 @@ nwarn=$(nwarnings)
   if [ $status -eq 0 ]; then
     if [ "$nwarn" -gt 0 ]; then echo "TESTRIG GATE: PASS ($nwarn warnings)"; else echo "TESTRIG GATE: PASS"; fi
   else
-    echo "TESTRIG GATE: FAIL ($(for s in $STAGES; do [ "${result[$s]:-}" = FAIL ] && printf '%s ' "$s"; done | sed 's/ $//') failed)"
+    echo "TESTRIG GATE: FAIL ($(for s in $STAGES; do for key in "$s" "$s-mttcg"; do
+      [ "${result[$key]:-}" = FAIL ] && printf '%s ' "$key"; done; done | sed 's/ $//') failed)"
   fi
 }
 # Let tee finish writing the log before exiting.
