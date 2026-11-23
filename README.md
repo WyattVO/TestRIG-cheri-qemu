@@ -225,7 +225,8 @@ utils/scripts/testrig-gate.sh --config utils/gate-profiles/full.conf $QEMU 100  
 It ends with a summary (each stage's result, time and notes, and the
 warnings counted by stage) and `TESTRIG GATE: PASS`, `PASS (N warnings)` or
 `FAIL (<stages> failed)`. Every run is saved to `GATE_LOG_DIR` (default
-`gate-logs/`; the `full*` profiles use `~/Projects/CAPSTONE/reports/gate-runs`)
+`gate-logs/`; every profile but `quick.conf` and `sail.conf` uses
+`~/Projects/CAPSTONE/reports/gate-runs`)
 as `<date>-<QEMU branch>-<QEMU commit>-<profile>.log`, whose header records the
 host, both commits, the profile and the seed; the CheriBSD console log and the
 full warning list are saved next to it. Don't edit `testrig-gate.sh`
@@ -295,12 +296,40 @@ $G --only upstream --suites I,M,Zacas --upstream-build ... --arch-test ... $QEMU
 
 **Saved setups.** `--config FILE` reads `VAR=value` lines (the environment
 variables at the top of `testrig-gate.sh`, e.g. `ONLY=`, `SKIP=`,
-`EXCLUDE=`, `ALLIANCE_QEMU=`); options on the command line win, so
-`--config full.conf --skip cheribsd` works. `utils/gate-profiles/` has
-`quick.conf` (stages 1-3), `sail.conf` (every Sail comparison) and
-`full.conf` (every stage, with the references in `~/Projects/CAPSTONE`).
-With no options the gate behaves as before: every stage whose reference
-is configured runs.
+`EXCLUDE=`, `ALLIANCE_QEMU=`, `NTESTS=`, `MTTCG=`); options on the command
+line win, so `--config full.conf --skip cheribsd` works. With no options the
+gate behaves as before: every stage whose reference is configured runs.
+
+`utils/gate-profiles/` is a ladder from "every edit" to "before a release":
+
+| profile | time | what it is for |
+| --- | --- | --- |
+| `quick.conf` | ~1.5 min | stages 1-3, no references |
+| `quick-mttcg.conf` | ~2 min | `quick.conf` with the bench in both thread modes |
+| `pre-commit.conf` | ~10 min | no reference QEMU, no CheriBSD boot, 30 random tests per template |
+| `sail.conf` | ~15 min | every Sail comparison |
+| `pre-push.conf` | ~1 h | every stage, both thread modes, the vote cut to 20 tests per template |
+| `full.conf` | ~1 h | every stage, references in `~/Projects/CAPSTONE` |
+| `full-mttcg.conf` | ~40 min | `full.conf` under MTTCG (no Alliance to vote against) |
+| `full-11.0.conf`, `full-11.0-mttcg.conf` | as above | the same two against upstream v11.0.0 |
+
+The times are what a Ryzen 7 7800X3D measured on 2026-11-22 for `quick-mttcg`
+(1:48), `full` (1:06:53) and `full-mttcg` (0:37:21); the two new middle rungs
+are estimates from their stages' measured times until a full run confirms
+them. Where the hours go: the three-way vote is about 40 minutes of a
+`full.conf` run and the 4-hart CheriBSD boot about 22 minutes, while every
+other stage together is under 20.
+
+**Both thread modes in one run.** `--mttcg off|on|require|both` (or `MTTCG=`)
+sets `BENCH_MTTCG` and `CHERIBSD_MTTCG` together. Only bench and cheribsd
+depend on the thread mode, so `--mttcg both` runs just those two twice, once
+round-robin and once under MTTCG, and every other stage once -- which is the
+difference between this and running `full.conf` and then `full-mttcg.conf`,
+where seven mode-insensitive stages are repeated for nothing. The second pass
+gets its own summary row (`bench-mttcg`, `cheribsd-mttcg`) and its own
+CheriBSD console log. Leaving `MTTCG` unset uses `BENCH_MTTCG`,
+`CHERIBSD_SMP` and `CHERIBSD_MTTCG` exactly as given, so the `full*` profiles
+run as they always have.
 
 ### Smaller runs
 
