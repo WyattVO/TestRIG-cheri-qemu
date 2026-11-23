@@ -343,7 +343,12 @@ gate behaves as before: every stage whose reference is configured runs.
 | `pre-push.conf` | ~1 h | every stage, both thread modes, the vote cut to 20 tests per template |
 | `full.conf` | ~1 h | every stage, references in `~/Projects/CAPSTONE` |
 | `full-mttcg.conf` | ~40 min | `full.conf` under MTTCG (no Alliance to vote against) |
-| `full-11.0.conf`, `full-11.0-mttcg.conf` | as above | the same two against upstream v11.0.0 |
+| `*-11.0.conf` | as above | `pre-commit`, `pre-push`, `full` and `full-mttcg` against upstream v11.0.0 |
+
+Each `-11.0` profile is its namesake with `UPSTREAM_BUILD` pointed at an
+upstream v11.0.0 build, so stage 6 compares an 11.0 port against the release
+it is based on rather than v10.2.0. `quick.conf`, `quick-mttcg.conf` and
+`sail.conf` need no variant: they run no stage that uses a reference QEMU.
 
 The times are what a Ryzen 7 7800X3D measured on 2026-11-22 for `quick-mttcg`
 (1:48), `full` (1:06:53) and `full-mttcg` (0:37:21); the two new middle rungs
