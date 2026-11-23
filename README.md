@@ -212,15 +212,47 @@ mkdir cheri-qemu-port/build && cd cheri-qemu-port/build
 
 **6. Run the gate**
 
+Pick a profile rather than assembling the settings by hand. The profiles in
+`utils/gate-profiles/` carry the reference paths and the stage selection, so
+each is one command, and the profile's name goes into the log file name --
+which is what makes a run reproducible afterwards:
+
 ```sh
+G=utils/scripts/testrig-gate.sh
 QEMU=/path/to/cheri-qemu-port/build/qemu-system-riscv64xcheri
-utils/scripts/testrig-gate.sh $QEMU 300                                    # stages 1-4
-CHERIBSD_OUTPUT=~/cheri/output utils/scripts/testrig-gate.sh $QEMU 300     # plus CheriBSD
+
+$G --config utils/gate-profiles/quick-mttcg.conf $QEMU       # every edit, ~2 min
+$G --config utils/gate-profiles/pre-commit.conf  $QEMU       # before a commit, ~10 min
+$G --config utils/gate-profiles/pre-push.conf    $QEMU 100   # before a push, ~1 h
+$G --config utils/gate-profiles/full.conf        $QEMU 100   # the one you record, ~1 h
+```
+
+The profiles above assume the references are in `~/Projects/CAPSTONE` (what
+`refs/build-refs.sh` builds). Point the gate elsewhere by overriding the paths
+on the command line, or give them as environment variables and skip profiles
+altogether:
+
+```sh
+$G $QEMU 300                                                     # stages 1-4, no references
+CHERIBSD_OUTPUT=~/cheri/output $G $QEMU 300                      # plus CheriBSD
 ALLIANCE_QEMU=/path/to/alliance-qemu/build/qemu-system-riscv64xcheri \
 UPSTREAM_BUILD=/path/to/upstream-qemu-10.2/build ARCH_TEST=/path/to/riscv-arch-test \
-CHERIBSD_OUTPUT=~/cheri/output utils/scripts/testrig-gate.sh $QEMU 100     # all but 2b
-utils/scripts/testrig-gate.sh --config utils/gate-profiles/full.conf $QEMU 100  # every stage, refs in ~/Projects/CAPSTONE
+CHERIBSD_OUTPUT=~/cheri/output $G $QEMU 100                      # all but 2b
+$G --config utils/gate-profiles/full.conf --cheribsd ~/cheri/output $QEMU 100
 ```
+
+The second positional argument is tests per template; leave it out and the
+profile's `NTESTS` decides, or 100 if it sets none. Run `quick-mttcg` after
+every edit to the port and `pre-push` before pushing; `full.conf` plus
+`full-mttcg.conf` is the pair whose results go in the record.
+
+**What a stage costs.** Measured on a Ryzen 7 7800X3D, 2026-11-22: the
+three-way vote is about 40 minutes of a `full.conf` run and the 4-hart
+CheriBSD boot about 22, the random tests about 10 at 100 per template (they
+scale linearly with that number), and all the other stages together under 20.
+If a run is taking longer than you want, those are the three to cut --
+`--skip vote`, `--skip cheribsd`, or fewer tests per template -- and
+[Saved setups](#turning-tests-on-and-off) has the profiles that do it for you.
 
 It ends with a summary (each stage's result, time and notes, and the
 warnings counted by stage) and `TESTRIG GATE: PASS`, `PASS (N warnings)` or
