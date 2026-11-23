@@ -96,6 +96,14 @@
 #   BENCH_INCLUDE, BENCH_EXCLUDE, TRACE_EXCLUDE, UPSTREAM_SUITES  as above
 #   SEED      seed for the random tests (default: from the clock)
 #   SAVE_DIR  where failing random tests are saved (default: random-failures/)
+#   GATE_KILL_STRAYS=1  reap QEMU processes left over from an earlier run
+#             before starting. They are reported either way; the default is
+#             not to kill them, because a process running the same binary
+#             may be one you started on purpose (see stray_qemu.py).
+#   GATE_UNIT_TESTS=0  skip the unit tests of the gate's own Python helpers.
+#             They run by default (about a second) and a failure stops the
+#             run before any stage, because every later verdict depends on
+#             them.
 #   ARCH      TestRIG architecture string
 #             (default: rv64imsafdcZicsr_Zifencei_Xcheri)
 #   CSR_EXCLUDE  regex of CSR names the csr template skips (default: CSRs
@@ -305,6 +313,21 @@ if [ $list_only -eq 0 ]; then
   echo "  log:      $log"
 fi
 
+# A QEMU left running by an earlier run competes with this one for the host
+# CPU, which skews the bench stage, so report leftovers before anything is
+# measured. They are only reaped when asked: a process running this same
+# binary may be one the user started on purpose.
+# The check must never be what stops a run, so a guard that cannot run at all
+# is reported as a skipped check rather than as leftovers that are not there.
+stray=$(python3 "$here/stray_qemu.py" "$qemu" ${GATE_KILL_STRAYS:+--kill} 2>&1) || true
+if grep -q '^stray QEMU:' <<<"$stray"; then
+  echo "=== Leftover QEMU processes"
+  echo "$stray"
+elif [ -n "$stray" ]; then
+  echo "=== Leftover QEMU processes: check skipped (stray_qemu.py failed)"
+  echo "$stray"
+fi
+
 echo "=== Plan (QEMU ${qemu}, $ntests tests per template)"
 plan_error=0
 for s in $STAGES; do
@@ -334,6 +357,22 @@ fi
 [ "${WARNINGS_FATAL:-0}" = 1 ] && echo "  warnings are fatal"
 [ $plan_error -eq 0 ] || { echo "error: a stage that was asked for cannot run" >&2; exit 2; }
 [ $list_only -eq 0 ] || exit 0
+
+# The gate leans on the Python helpers beside it -- the accelerator mode
+# detection, the MTTCG settings, the stray check -- and nothing else runs their
+# unit tests. Without this a broken helper surfaces as a puzzling stage failure
+# an hour in, or not at all. Here it costs about a second. GATE_UNIT_TESTS=0
+# skips it for someone editing them.
+if [ "${GATE_UNIT_TESTS:-1}" = 1 ]; then
+  if unit=$(cd "$here" && python3 -B -m unittest discover -s . -p 'test_*.py' 2>&1); then
+    printf '  %-12s %s\n' "unit tests" \
+      "$(sed -n 's/^Ran \([0-9]*\) tests.*/\1 passed/p' <<<"$unit" | head -1)"
+  else
+    echo "$unit" >&2
+    echo "error: the gate's own unit tests fail; fix them before trusting a run" >&2
+    exit 2
+  fi
+fi
 
 [ -x "$qemu" ] || { echo "error: $qemu is not executable" >&2; exit 2; }
 if want regressions || want selftest || want random || want vote; then
